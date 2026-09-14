@@ -127,22 +127,28 @@ class GGUFScanner:
     rules = GGUF_RULES
 
     def scan(self, path: Path, display: str) -> Iterator[Finding]:
-        size = path.stat().st_size
-        templates: list[tuple[str, int, str]] = []
-        fatal: _Fatal | None = None
         with path.open("rb") as fh:
-            fh.seek(4)  # magic, already checked by detection
-            try:
-                _parse(fh, size, templates)
-            except _Fatal as exc:
-                fatal = exc
+            yield from scan_stream(fh, path.stat().st_size, display)
 
-        # Templates read before a structural error are still analysed.
-        for key, offset, text in templates:
-            yield from template_findings(key, offset, text, display)
-        if fatal:
-            where = Location(display, None, fatal.offset)
-            yield Finding(fatal.rule, fatal.rule.default_severity, str(fatal), where)
+
+def scan_stream(
+    fh: BinaryIO, size: int, display: str, member: str | None = None
+) -> Iterator[Finding]:
+    """Scan a GGUF read from any seekable stream, so a member of an archive counts too."""
+    templates: list[tuple[str, int, str]] = []
+    fatal: _Fatal | None = None
+    fh.seek(4)  # magic, already checked by detection
+    try:
+        _parse(fh, size, templates)
+    except _Fatal as exc:
+        fatal = exc
+
+    # Templates read before a structural error are still analysed.
+    for key, offset, text in templates:
+        yield from template_findings(key, offset, text, display, member)
+    if fatal:
+        where = Location(display, member, fatal.offset)
+        yield Finding(fatal.rule, fatal.rule.default_severity, str(fatal), where)
 
 
 def _parse(fh: BinaryIO, size: int, templates: list[tuple[str, int, str]]) -> None:
@@ -244,7 +250,9 @@ def _skip_value(r: _Reader, vtype: int, key_offset: int, depth: int) -> None:
         raise _Fatal(MALFORMED, key_offset, f"unknown metadata value type {vtype}")
 
 
-def template_findings(key: str, offset: int, text: str, display: str) -> Iterator[Finding]:
+def template_findings(
+    key: str, offset: int, text: str, display: str, member: str | None = None
+) -> Iterator[Finding]:
     escapes: dict[str, str] = {}
     evasions: dict[str, str] = {}
     for block in (m.group() for m in _CODE.finditer(text)):
@@ -263,4 +271,5 @@ def template_findings(key: str, offset: int, text: str, display: str) -> Iterato
         return
     message = f"{key} uses {', '.join(found)}"
     evidence = next(iter(found.values()))
-    yield Finding(rule, rule.default_severity, message, Location(display, None, offset), evidence)
+    yield Finding(rule, rule.default_severity, message, Location(display, member, offset),
+                  evidence)

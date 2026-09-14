@@ -24,6 +24,9 @@ def malicious_zip() -> bytes:
     return buf.getvalue()
 
 
+SSTI = "{{ self.__init__.__globals__.__builtins__.__import__('os').popen('id').read() }}"
+
+
 def fronts() -> dict[str, bytes]:
     return {
         "pickle": b.plain_data(),
@@ -80,3 +83,94 @@ def test_a_corrupt_archive_still_reaches_the_zip_scanner(tmp_path):
     path = b.write(tmp_path / "model.pt", broken)
     assert Format.ZIP in detect_all(path)
     assert "MW-SC-010" in {f.rule.id for f in scan_paths([path]).findings}
+
+
+# --- the same gap, one layer down -------------------------------------------------
+#
+# Detection at the top of a file was fixed first; members of an archive kept their own
+# three-way classifier (npy, hdf5, pickle-by-header-or-name) and returned nothing at
+# all for everything else. Measured against that version, five of the seven payload
+# classes below reported nothing after being moved inside a zip. The two that already
+# worked are kept as controls: a table where every row is expected to fail proves
+# nothing about the harness.
+
+FIXTURES = b.HDF5_FIXTURES.parent
+
+
+def hidden_pickle_safetensors() -> bytes:
+    payload = b.global_call("os", "system")
+    tensors = {"a": b.f32(1, 0), "z": b.f32(1, 4 + len(payload))}
+    return b.safetensors(tensors, b"\x00" * 4 + payload + b"\x00" * 4)
+
+
+BURIED = {
+    # control: the member kind the old classifier did recognise
+    "hdf5": ("x/m.h5", (FIXTURES / "hdf5/extlink-v3.h5").read_bytes(), "MW-SC-060"),
+    "onnx": ("x/m.onnx", (FIXTURES / "onnx/custom-domain.onnx").read_bytes(), "MW-SC-072"),
+    "gguf": ("x/m.gguf", b.gguf([b.gg_kv_str("tokenizer.chat_template", SSTI)]), "MW-SC-042"),
+    "safetensors": ("x/w.safetensors", hidden_pickle_safetensors(), "MW-SC-001"),
+    "nested-zip": ("x/inner.pt", malicious_zip(), "MW-SC-001"),
+    # No header and a name that is not *.pkl, so neither of the old checks fired.
+    "headerless-pickle": ("x/data", b.proto0_call("os", "system"), "MW-SC-001"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(BURIED))
+def test_a_payload_inside_an_archive_is_still_reported(kind, tmp_path):
+    name, blob, rule = BURIED[kind]
+    path = b.torch_zip(tmp_path / "model.pt", b.torch_state_dict(), {name: blob})
+    ids = {f.rule.id for f in scan_paths([path]).findings}
+    assert rule in ids, f"a {kind} payload buried in an archive went unreported"
+
+
+@pytest.mark.parametrize("kind", sorted(BURIED))
+def test_a_buried_payload_is_located_in_its_member(kind, tmp_path):
+    # Reporting the archive is not enough to act on: the finding has to name the member
+    # that carries the payload, or nobody can tell which file to remove.
+    name, blob, rule = BURIED[kind]
+    path = b.torch_zip(tmp_path / "model.pt", b.torch_state_dict(), {name: blob})
+    located = [f for f in scan_paths([path]).findings if f.rule.id == rule]
+    assert located and all(f.location.member and name in f.location.member for f in located)
+
+
+def test_a_nest_of_archives_stops_at_the_depth_limit(tmp_path):
+    from modelwarden.scanners.supply_chain.archive import MAX_NESTING
+
+    blob = malicious_zip()
+    for _ in range(MAX_NESTING + 2):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr("archive/inner.pt", blob)
+        blob = buf.getvalue()
+    path = b.write(tmp_path / "nest.pt", blob)
+    ids = {f.rule.id for f in scan_paths([path]).findings}
+    # Not followed to the bottom, and not silent about stopping.
+    assert "MW-GEN-002" in ids
+
+
+def test_a_compressed_member_too_large_to_hold_is_still_read_as_a_pickle(tmp_path, monkeypatch):
+    """The fallback that keeps a wide silence from becoming a narrow one.
+
+    Detection needs to seek, and a large compressed member gives no way to. Pickles are
+    read front to back and never needed one, which is how every member was scanned
+    before this module learned to detect properly — so the sequential path stays.
+    """
+    from modelwarden.scanners.supply_chain import archive as archive_mod
+
+    monkeypatch.setattr(archive_mod, "RAW_FALLBACK_LIMIT", 8)
+    path = tmp_path / "model.pt"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("archive/data.pkl", b.global_call("os", "system"))
+    assert "MW-SC-001" in {f.rule.id for f in scan_paths([path]).findings}
+
+
+def test_a_compressed_member_that_cannot_be_classified_is_not_silent(tmp_path, monkeypatch):
+    from modelwarden.scanners.supply_chain import archive as archive_mod
+
+    monkeypatch.setattr(archive_mod, "RAW_FALLBACK_LIMIT", 8)
+    path = tmp_path / "model.pt"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("archive/data.pkl", b.plain_data())
+        archive.writestr("archive/x/m.onnx", (FIXTURES / "onnx/custom-domain.onnx").read_bytes())
+    ids = {f.rule.id for f in scan_paths([path]).findings}
+    assert "MW-GEN-006" in ids, "a member nothing could be read from was reported as clean"

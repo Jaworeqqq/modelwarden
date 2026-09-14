@@ -7,13 +7,41 @@ cadence.
 
 ### Fixed
 
-- **The docs described the silencing defect as open when both halves are closed.** The
-  README bullet said the cases were pinned as strict `xfail`; `tests/test_silencing.py`
+- **Five of seven payload classes survived being placed inside an archive, and no
+  longer do.** MW-GEN-005 fixed detection at the top of a file; members of a zip kept
+  a separate classifier — npy, or hdf5, or a pickle by header or `*.pkl` name, and
+  `None` for everything else, where `None` meant no finding at all. Buried in an
+  ordinary `torch.save` archive, an ONNX with a custom operator domain, a GGUF whose
+  chat template reaches Python internals, a safetensors hiding a pickle between
+  tensors, a nested zip carrying `os.system`, and a protocol-0 pickle under the name
+  `data` all reported **nothing**. The same proportion as the original top-level
+  measurement, for the same reason: the file was classified by something narrower than
+  the thing that would open it.
+- The fix is a deletion rather than a second classifier. `core.detect` already answered
+  all five questions for a file on disk and only took a path, so its sniffers now take
+  a seekable stream, `inspect()` is a thin wrapper that opens the file, and an archive
+  member goes through `inspect_stream()` and is dispatched to whichever scanner owns
+  the format. `archive._kind` and `archive._analyse` are gone. Findings now name the
+  member they came from, so there is something to act on.
+- Measured before shipping, on the side that decides: zero new findings across all 35
+  committed fixtures and a real 86 MB `all-MiniLM-L6-v2` export, scanned bare and again
+  as a stored member of an archive.
+- Two ceilings now bound the walk rather than one step of it: archives nest at most
+  four deep (deeper is MW-GEN-002) and one archive may materialise at most 512 MB. A
+  per-member limit never bounded a zip bomb, which is a nest or a thousand members that
+  each pass their own check.
+- A member that is both compressed and over 64 MB can be neither seeked nor held.
+  Pickle and `.npy` are read front to back and are still scanned there — dropping that
+  would have traded a wide silence for a narrower one — and anything else is reported
+  as MW-GEN-006 instead of passed over.
+
+- **The README described the silencing defect as open when both halves are closed.**
+  The bullet said the cases were pinned as strict `xfail`; `tests/test_silencing.py`
   has had no xfail since the orphan-opset check landed, and all nine cases pass as
-  regression tests. `docs/rules.md` still carried "two fixed, one open" in its heading
-  and "the ONNX half is not" in its body. Both now match the code. The record of the
-  three refuted discriminators stays, because it is worth more than the two fixes that
-  shipped.
+  regression tests. `docs/rules.md` still carried "two fixed, one open" and "the ONNX
+  half is not" in its heading and body. Both now match the code. The record of the
+  three refuted discriminators stays, because that is the part worth more than the two
+  fixes that shipped.
 
 - **One flipped bit could silence an ONNX custom-operator finding, and no longer can.**
   Byte 23 of `custom-domain.onnx` is the `NodeProto.domain` field header; changing its

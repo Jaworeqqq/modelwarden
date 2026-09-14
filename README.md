@@ -48,7 +48,7 @@ at all.
 | Format | What is checked |
 |---|---|
 | pickle (protocol 0-5), legacy torch | imports, unresolvable imports, malformed streams, back-to-back pickles |
-| zip: torch.save, `.npz`, TorchScript | every member by content, bad CRC members, embedded source |
+| zip: torch.save, `.npz`, TorchScript | every member by the same detector used on a file, nested archives, bad CRC members, embedded source |
 | NumPy `.npy` | object arrays and the pickle inside them, header limits |
 | safetensors | header size, duplicate keys, offsets, overlaps, unclaimed bytes, hidden pickles |
 | GGUF (v2/v3, both endiannesses) | size fields against the file, tensor descriptors, Jinja chat-template injection |
@@ -333,6 +333,11 @@ for things it never checked.
   command line, because questioning a live server means running it. It is never
   launched from a configuration file the scanner happened to read, and never through a
   shell.
+- **One member shape cannot be looked inside.** A member that is both compressed and
+  larger than 64 MB cannot be seeked and cannot be held, so only the formats read front
+  to back — pickle and `.npy` — are still scanned there. Anything else is reported as
+  MW-GEN-006 rather than passed over. Stored members, which is what `torch.save`
+  writes, are windowed in place at any size.
 - **Live modes send traffic, static scanning sends none.** `probe` sends prompts to the
   endpoint you name and `server` speaks to the server you name; nothing else leaves the
   machine, and the API key never appears in a finding, a report or a target

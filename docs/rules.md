@@ -314,6 +314,62 @@ fields produces a header above numpy's default `max_header_size` of 10000, and
 `numpy.load` then refuses the file until the caller raises the limit or passes
 `allow_pickle=True`. Verified against real numpy 2.5 output.
 
+### The same polyglot gap, one layer down, and how wide it was
+
+MW-GEN-005 fixed detection at the top of a file. Members of an archive kept a
+separate classifier: three checks on the first sixteen bytes — npy, or hdf5, or a
+pickle by header or by a `*.pkl` name — and `None` for everything else, where `None`
+meant no finding of any kind. Two detectors, and the second one had five blind spots.
+
+Measured by burying one payload of each class in an ordinary `torch.save` archive
+alongside a benign `data.pkl`:
+
+| Payload buried in a member | Reported before | Reported now |
+|---|---|---|
+| HDF5 with an external link | MW-SC-060 | MW-SC-060 |
+| pickle with a header, any name | MW-SC-001 | MW-SC-001 |
+| ONNX with a custom operator domain | **nothing** | MW-SC-072 |
+| GGUF with a chat template reaching Python internals | **nothing** | MW-SC-042 |
+| safetensors hiding a pickle between tensors | **nothing** | MW-SC-001, MW-SC-033 |
+| a nested zip carrying `os.system` | **nothing** | MW-SC-001 |
+| protocol-0 pickle under the name `data` | **nothing** | MW-SC-001 |
+
+**Five of seven were a complete bypass**, the same proportion the top-level
+measurement found, for the same reason: a file was classified by something narrower
+than the thing that would open it. The two that already worked are kept as controls —
+a table where every row fails proves nothing about the harness.
+
+The fix was not a wider second classifier. `core.detect` already answered all five
+questions for a file on disk and only took a path, so its sniffers now take a seekable
+stream and `inspect()` is a thin wrapper that opens the file. An archive member is
+handed the same detector and dispatched to whichever scanner owns the format, which is
+also what makes the member show up in the finding's location rather than only the
+archive.
+
+**The false-positive side.** Zero new findings across all 35 committed fixtures and a
+real 86 MB `all-MiniLM-L6-v2` ONNX export, scanned bare and again as a stored member of
+an archive. That is the measurement that decided this could ship.
+
+### What a member costs to look inside, and the one case that still cannot
+
+Detection seeks, and a member gives no way to seek unless it can be either windowed or
+held. Three paths, in order:
+
+- **Stored member:** a byte range of the archive already, so a window over it seeks
+  like a file, at any size and with no copy. This is the shape `torch.save` writes.
+- **Anything else up to 64 MB:** read in full, which is also the CRC check — that is
+  how a patched payload stays MW-SC-011 instead of being scanned in silence.
+- **Compressed and larger than that:** nothing can seek it. Pickles and `.npy` are read
+  front to back and never needed to, so they are still scanned sequentially, which is
+  how every member was read before this module learned to detect. Anything else is
+  reported as MW-GEN-006 rather than passed over: a 90 MB deflated ONNX inside a `.pt`
+  is not analysed, and saying so is the whole point of that rule.
+
+Two ceilings guard the walk rather than one step of it: archives nest at most
+`MAX_NESTING` deep (deeper is MW-GEN-002, not silence), and one archive may
+materialise at most 512 MB in total. A per-member limit does not bound a zip bomb,
+because a bomb is a thousand members or a nest that each pass their own check.
+
 ## Supply chain: safetensors
 
 | ID | Default | Title |

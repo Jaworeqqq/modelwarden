@@ -15,6 +15,12 @@ package before the change: five such files out of six, all reported clean.
 So detection returns every format a file plausibly is, in the order a loader would
 resolve them, and the engine scans all of them. A single guess is structurally
 unsound: being wrong once means reporting on a file nobody will ever load.
+
+All of it works on a seekable stream rather than a path, so an archive member is
+classified by exactly the same code as a file on disk. That is not a convenience:
+`archive.py` used to carry its own three-way classifier, and five payload classes out
+of seven survived being placed inside a zip because of it. A second detector is a
+second set of blind spots.
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ import struct
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 ZIP_MAGIC = b"PK\x03\x04"
 NUMPY_MAGIC = b"\x93NUMPY"
@@ -65,15 +72,18 @@ def has_pickle_header(head: bytes) -> bool:
     return len(head) >= 2 and head[0] == 0x80 and head[1] in PICKLE_PROTOCOLS
 
 
-def opens_as_zip(path: Path) -> bool:
+def opens_as_zip(fh: BinaryIO) -> bool:
     """Whether `zipfile` can open it, which is how a loader decides.
 
     Deliberately not a magic-byte check. `zipfile` locates an archive by the end of
     central directory record at the *tail*, so an archive can be preceded by
     arbitrary bytes and still load. That gap is the polyglot bypass.
+
+    Closing the ZipFile does not close `fh`: zipfile only closes what it opened itself.
     """
     try:
-        with zipfile.ZipFile(path) as archive:
+        fh.seek(0)
+        with zipfile.ZipFile(fh) as archive:
             archive.namelist()
     except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError):
         return False
@@ -98,22 +108,31 @@ class Detection:
 
 def inspect(path: Path) -> Detection:
     """Every format this file plausibly is, and every limit that cut the search short."""
-    size = path.stat().st_size
     with path.open("rb") as fh:
-        head = fh.read(16)
+        return inspect_stream(fh, path.stat().st_size)
+
+
+def inspect_stream(fh: BinaryIO, size: int) -> Detection:
+    """The same question asked of a seekable stream: a file, or a member inside one.
+
+    Every sniffer below seeks for itself rather than trusting the position it was
+    handed, because they run in sequence over one stream.
+    """
+    fh.seek(0)
+    head = fh.read(16)
 
     matches: list[Format] = []
     undecided: list[str] = []
     # First, because it is what a loader resolves first and what a front-magic check
     # misses. The magic test stays as well: a corrupt archive still belongs to the zip
     # scanner, which reports that it could not be opened rather than ignoring it.
-    if head.startswith(ZIP_MAGIC) or opens_as_zip(path):
+    if head.startswith(ZIP_MAGIC) or opens_as_zip(fh):
         matches.append(Format.ZIP)
     if head.startswith(NUMPY_MAGIC):
         matches.append(Format.NUMPY)
     if head.startswith(GGUF_MAGIC):
         matches.append(Format.GGUF)
-    if hdf5_superblock_offset(path, size) is not None:
+    if hdf5_superblock_offset(fh, size) is not None:
         matches.append(Format.HDF5)
     # Before the pickle check: a safetensors header length can start with 0x80.
     if _looks_like_safetensors(head, size):
@@ -121,7 +140,7 @@ def inspect(path: Path) -> Detection:
     if has_pickle_header(head):
         matches.append(Format.PICKLE)
     elif head:
-        verdict = _parses_as_pickle(path, size)
+        verdict = _parses_as_pickle(fh, size)
         if verdict is None:
             undecided.append(
                 f"the opcode stream had not reached STOP within the first "
@@ -136,10 +155,10 @@ def inspect(path: Path) -> Detection:
                 "recognising MCP tool lists and client configurations"
             )
         else:
-            json_format = _looks_like_mcp_json(path, size)
+            json_format = _looks_like_mcp_json(fh, size)
             if json_format is not None:
                 matches.append(json_format)
-    if not matches and _looks_like_onnx(path):
+    if not matches and _looks_like_onnx(fh):
         matches.append(Format.ONNX)
     return Detection(matches, tuple(undecided))
 
@@ -164,17 +183,15 @@ def _looks_like_safetensors(head: bytes, size: int) -> bool:
     return head[8:9] == b"{" and 2 <= length <= size - 8
 
 
-def hdf5_superblock_offset(path: Path, size: int | None = None) -> int | None:
+def hdf5_superblock_offset(fh: BinaryIO, size: int) -> int | None:
     """Where the HDF5 superblock starts, or None if this is not an HDF5 file."""
     from modelwarden.scanners.supply_chain.hdf5 import superblock_offset
 
-    if size is None:
-        size = path.stat().st_size
-    with path.open("rb") as fh:
-        return superblock_offset(fh, size)
+    fh.seek(0)
+    return superblock_offset(fh, size)
 
 
-def _looks_like_mcp_json(path: Path, size: int) -> Format | None:
+def _looks_like_mcp_json(fh: BinaryIO, size: int) -> Format | None:
     """Tell a tools/list result from a client configuration, or neither."""
     import json
 
@@ -184,7 +201,8 @@ def _looks_like_mcp_json(path: Path, size: int) -> Format | None:
     if size > MCP_SNIFF_LIMIT:
         return None
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        fh.seek(0)
+        document = json.loads(fh.read(size).decode("utf-8"))
     except (ValueError, RecursionError, OSError):
         return None
 
@@ -202,12 +220,12 @@ def _looks_like_mcp_json(path: Path, size: int) -> Format | None:
     return None
 
 
-def _looks_like_onnx(path: Path) -> bool:
+def _looks_like_onnx(fh: BinaryIO) -> bool:
     # Avoid importing the scanner at module load; detection stays dependency-free.
     from modelwarden.scanners.supply_chain._protobuf import ProtobufError, iter_fields
 
-    with path.open("rb") as fh:
-        head = fh.read(ONNX_SNIFF_LIMIT)
+    fh.seek(0)
+    head = fh.read(ONNX_SNIFF_LIMIT)
     seen_ir_version = False
     seen_graph_or_opset = False
     try:
@@ -229,15 +247,15 @@ def _looks_like_onnx(path: Path) -> bool:
     return seen_ir_version and seen_graph_or_opset
 
 
-def _parses_as_pickle(path: Path, size: int) -> bool | None:
+def _parses_as_pickle(fh: BinaryIO, size: int) -> bool | None:
     """True, False, or None where the prefix ran out before the opcode stream did.
 
     The third answer is the point. A bad opcode means this is not a pickle; reaching
     the edge of the prefix mid-stream means the question was never answered, and
     returning False for both let a 16 MB protocol-0 pickle pass as an unknown file.
     """
-    with path.open("rb") as fh:
-        data = fh.read(HEADERLESS_PROBE_LIMIT)
+    fh.seek(0)
+    data = fh.read(HEADERLESS_PROBE_LIMIT)
     opcodes = 0
     try:
         for opcode, _arg, _pos in pickletools.genops(io.BytesIO(data)):

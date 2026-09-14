@@ -70,33 +70,41 @@ class SafetensorsScanner:
     rules = (HEADER_TOO_LARGE, BAD_HEADER, BAD_LAYOUT, UNCLAIMED, *PICKLE_RULES)
 
     def scan(self, path: Path, display: str) -> Iterator[Finding]:
-        size = path.stat().st_size
-        header_loc = Location(display, None, 8)
         with path.open("rb") as fh:
-            (length,) = struct.unpack("<Q", fh.read(8))
-            if length > MAX_HEADER:
-                message = (f"header declares {length} bytes, "
-                           f"the reference loader stops at {MAX_HEADER}")
-                yield Finding(HEADER_TOO_LARGE, HEADER_TOO_LARGE.default_severity, message,
-                              Location(display, None, 0))
-                return
-            try:
-                header = load_strict(fh.read(length))
-            except (ValueError, RecursionError) as exc:  # includes UnicodeDecodeError
-                yield Finding(BAD_HEADER, BAD_HEADER.default_severity,
-                              f"header is not valid JSON: {exc}", header_loc)
-                return
-            if not isinstance(header, dict):
-                yield Finding(BAD_HEADER, BAD_HEADER.default_severity,
-                              "header is not a JSON object", header_loc)
-                return
-            yield from _check(header, fh, 8 + length, size - 8 - length, display)
+            yield from scan_stream(fh, path.stat().st_size, display)
+
+
+def scan_stream(
+    fh: BinaryIO, size: int, display: str, member: str | None = None
+) -> Iterator[Finding]:
+    """Scan safetensors read from any seekable stream, so a member of an archive counts too."""
+    header_loc = Location(display, member, 8)
+    fh.seek(0)
+    (length,) = struct.unpack("<Q", fh.read(8))
+    if length > MAX_HEADER:
+        message = (f"header declares {length} bytes, "
+                   f"the reference loader stops at {MAX_HEADER}")
+        yield Finding(HEADER_TOO_LARGE, HEADER_TOO_LARGE.default_severity, message,
+                      Location(display, member, 0))
+        return
+    try:
+        header = load_strict(fh.read(length))
+    except (ValueError, RecursionError) as exc:  # includes UnicodeDecodeError
+        yield Finding(BAD_HEADER, BAD_HEADER.default_severity,
+                      f"header is not valid JSON: {exc}", header_loc)
+        return
+    if not isinstance(header, dict):
+        yield Finding(BAD_HEADER, BAD_HEADER.default_severity,
+                      "header is not a JSON object", header_loc)
+        return
+    yield from _check(header, fh, 8 + length, size - 8 - length, display, member)
 
 
 def _check(
-    header: dict, fh: BinaryIO, data_start: int, data_len: int, display: str
+    header: dict, fh: BinaryIO, data_start: int, data_len: int, display: str,
+    member: str | None = None,
 ) -> Iterator[Finding]:
-    header_loc = Location(display, None, 8)
+    header_loc = Location(display, member, 8)
 
     def bad(message: str, severity: Severity = BAD_HEADER.default_severity) -> Finding:
         return Finding(BAD_HEADER, severity, message, header_loc)
@@ -137,11 +145,11 @@ def _check(
         if begin < cursor:
             yield layout(f"tensors {owner!r} and {name!r} overlap")
         elif begin > cursor:
-            yield from _unclaimed(fh, data_start, cursor, begin, display)
+            yield from _unclaimed(fh, data_start, cursor, begin, display, member)
         if end >= cursor:
             cursor, owner = end, name
     if cursor < data_len:
-        yield from _unclaimed(fh, data_start, cursor, data_len, display)
+        yield from _unclaimed(fh, data_start, cursor, data_len, display, member)
 
 
 def _entry_problem(entry: object) -> str | None:
@@ -163,19 +171,20 @@ def _uint(value: object) -> bool:
 
 
 def _unclaimed(
-    fh: BinaryIO, data_start: int, begin: int, end: int, display: str
+    fh: BinaryIO, data_start: int, begin: int, end: int, display: str,
+    member: str | None = None,
 ) -> Iterator[Finding]:
     offset = data_start + begin
     fh.seek(offset)
     head = fh.read(16)
-    where = Location(display, None, offset)
+    where = Location(display, member, offset)
     size = end - begin
 
     if has_pickle_header(head):
         yield Finding(UNCLAIMED, Severity.MEDIUM,
                       f"{size} bytes claimed by no tensor start with a pickle header", where)
         fh.seek(offset)
-        yield from findings_for(analyse(fh), display)
+        yield from findings_for(analyse(fh), display, member)
     elif head.startswith((ZIP_MAGIC, NUMPY_MAGIC)):
         message = f"{size} bytes claimed by no tensor start with an embedded file header"
         yield Finding(UNCLAIMED, Severity.MEDIUM, message, where)
