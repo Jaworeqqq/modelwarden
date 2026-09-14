@@ -7,6 +7,28 @@ cadence.
 
 ### Added
 
+- **`tools/bitflip.py` uses a real loader where one is installed**, which is what turns
+  a candidate into a verdict. A flip the loader still accepts hid a live payload; one it
+  rejects made the payload inert. `onnxruntime` is optional and never imported by the
+  package, and it is consulted only on fixtures whose *clean* version it accepts —
+  otherwise every mutant would look inert for reasons unrelated to the mutation, and the
+  output says "oracle unusable" instead of guessing. The fixture is made loadable from
+  the scanner's own output: an external-data finding names the file the model wants, so
+  a stand-in is written for it, with no fixture-specific knowledge built in.
+- What it settled immediately: the `extdata-*` cluster reported in the sweep is **not a
+  defect**. All 28 candidates on `extdata-ok.onnx` are rejected by `onnxruntime`. Every
+  silent offset is a field tag or a length prefix, and in protobuf both are
+  authoritative for every reader, so a flip that hides a field hides it from the loader
+  too. Byte 2 turns the `graph` tag into `doc_string`: the model declares its own graph
+  as documentation and has no graph left to load.
+- The catalogue now states the general shape rather than the instance: **a silencing gap
+  needs either redundancy or reader disagreement.** `zipfile` reads the tail while a
+  magic check reads the head; HDF5 states a group's contents in a B-tree and names them
+  in a local heap; MW-SC-072 exists because a custom domain is named both on the node and
+  in `opset_import`, and the fix reads the copy the mutation did not touch. Where a
+  format encodes each fact once, counting flips measures the format rather than the
+  scanner.
+
 - **On PyPI: `pip install modelwarden`.** Published by GitHub Actions on a `v*` tag
   through PyPI Trusted Publishing, so no API token is stored in repository secrets and
   there is nothing to leak or rotate. The gate runs again inside the publish workflow

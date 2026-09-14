@@ -16,13 +16,21 @@ its format, leaves the evidence bytes where they were, and produces no finding a
 That is a *candidate*, not a confirmed defect, and the gap is real: the same flip may
 have made the payload inert rather than invisible. Breaking the `"mcpServers"` key of a
 client configuration hides its servers from this scanner, and from the client that
-would have launched them — nothing was silenced that still mattered. Only reading the
-mechanism separates the two, which is how the two HDF5 checks in 0.2.1 were calibrated
-and why they are as narrow as they are.
+would have launched them — nothing was silenced that still mattered.
 
-So the number is a **regression signal, not a defect count**. Its value is the
-difference between two runs: a change that makes the scanner quieter shows up here
-before anybody notices it in the field.
+**Where a real loader is installed, the tool stops guessing.** A candidate that a
+loader still accepts is a payload hidden from the scanner and live for everybody else,
+which is the defect. A candidate the loader now rejects is inert. `onnxruntime` is the
+only loader used, it is optional, it is never imported by the package, and it is used
+only on fixtures whose clean version the loader accepts — otherwise the oracle has
+nothing to say and the output says *that* instead of guessing.
+
+The instrument makes a fixture loadable using the scanner's own output: an external-data
+finding names the file the model wants, so a zero-filled stand-in is written for it. No
+fixture-specific knowledge is built in.
+
+Without an oracle the number is a **regression signal, not a defect count**, and its
+value is the difference between two runs.
 
 Not part of the package: an instrument that lives beside the work, like probe_bench.
 Nothing here is imported by a scanner.
@@ -48,6 +56,53 @@ from modelwarden.core.detect import detect_all  # noqa: E402
 from modelwarden.core.engine import scan_paths  # noqa: E402
 
 DEFAULT_MAX_BYTES = 4096
+# Rules whose evidence names a file the model loads from. Used to stand up an external
+# dependency so a loader can accept the fixture at all.
+_EXTERNAL_DATA_RULES = frozenset({"MW-SC-071", "MW-SC-070"})
+
+
+def loader() -> object | None:
+    """A real loader, if one is installed. Optional, and outside the package by design.
+
+    The scanner may not import this — one dependency outside the standard library is
+    authorised and it is not this one. An instrument beside the work is under no such
+    rule, and a loader is the only thing that can answer "would this still run".
+    """
+    try:
+        import onnxruntime
+    except ImportError:
+        return None
+    onnxruntime.set_default_logger_severity(4)
+    return onnxruntime
+
+
+def _loads(engine, path: Path) -> bool:
+    import contextlib
+    import io as _io
+
+    try:
+        with contextlib.redirect_stderr(_io.StringIO()):
+            engine.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    except Exception:
+        return False
+    return True
+
+
+def _stand_up_external_data(findings, work: Path) -> None:
+    """Create what an external-data finding says the model will open.
+
+    Driven by the scan rather than by a table of fixture names: the finding already
+    names the path. Absolute paths and traversals are skipped, for the obvious reason.
+    """
+    for finding in findings:
+        if finding.rule.id not in _EXTERNAL_DATA_RULES or not finding.evidence:
+            continue
+        rel = finding.evidence
+        if rel.startswith("/") or ".." in rel:
+            continue
+        target = work / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\x00" * 4096)
 
 
 def flip(data: bytes, offset: int, bit: int) -> bytes:
@@ -83,15 +138,26 @@ def needles(findings, data: bytes) -> list[bytes]:
     return found
 
 
-def sweep(path: Path, work: Path) -> dict:
+def sweep(path: Path, work: Path, engine: object | None = None) -> dict:
     """Every single-bit flip of one fixture, classified."""
     data = path.read_bytes()
     baseline = scan_paths([path]).findings
     marks = needles(baseline, data)
     mutant = work / path.name
 
-    counts = {"silent": 0, "reported": 0, "undetected": 0, "evidence_destroyed": 0}
+    # The oracle is only worth consulting where it accepts the clean file. If it does
+    # not, every mutant would look "inert" for a reason that has nothing to do with the
+    # mutation, which is worse than having no oracle at all.
+    oracle = "none"
+    if engine is not None:
+        _stand_up_external_data(baseline, work)
+        mutant.write_bytes(data)
+        oracle = "used" if _loads(engine, mutant) else "clean fixture does not load"
+
+    counts = {"silent": 0, "reported": 0, "undetected": 0, "evidence_destroyed": 0,
+              "silent_live": 0, "silent_inert": 0}
     silenced: list[list[int]] = []
+    live: list[list[int]] = []
     for offset in range(len(data)):
         for bit in range(8):
             candidate = flip(data, offset, bit)
@@ -107,6 +173,12 @@ def sweep(path: Path, work: Path) -> dict:
             else:
                 counts["silent"] += 1
                 silenced.append([offset, bit])
+                if oracle == "used":
+                    if _loads(engine, mutant):
+                        counts["silent_live"] += 1
+                        live.append([offset, bit])
+                    else:
+                        counts["silent_inert"] += 1
 
     return {
         "bytes": len(data),
@@ -117,7 +189,10 @@ def sweep(path: Path, work: Path) -> dict:
         # Fixtures whose findings carry no evidence bytes cannot answer "is the payload
         # still there", so their hits are weaker and kept out of the headline total.
         "verifiable": bool(marks),
+        "oracle": oracle,
         "silent": silenced,
+        # The ones that matter: hidden from the scanner and still accepted by a loader.
+        "silent_live": live,
     }
 
 
@@ -139,8 +214,12 @@ def finding_bearing(root: Path, max_bytes: int) -> tuple[list[Path], list[tuple[
 
 def measure(root: Path, max_bytes: int) -> dict:
     started = time.monotonic()
+    engine = loader()
     chosen, skipped = finding_bearing(root, max_bytes)
-    out: dict = {"max_bytes": max_bytes, "fixtures": {}, "skipped": {}}
+    out: dict = {"max_bytes": max_bytes, "oracle": engine is not None,
+                 "fixtures": {}, "skipped": {}}
+    print("   loader oracle: " + ("onnxruntime" if engine else
+          "none installed — hits stay candidates"), flush=True)
     for path, size in skipped:
         out["skipped"][str(path.relative_to(root))] = size
     if skipped:
@@ -151,9 +230,13 @@ def measure(root: Path, max_bytes: int) -> dict:
         work = Path(tmp)
         for path in chosen:
             name = str(path.relative_to(root))
-            result = sweep(path, work)
+            result = sweep(path, work, engine)
             out["fixtures"][name] = result
             weak = "" if result["verifiable"] else "   (no evidence bytes: not counted)"
+            if result["oracle"] == "used":
+                weak += f"   [{result['counts']['silent_live']} still load]"
+            elif result["oracle"] != "none":
+                weak += f"   [oracle unusable: {result['oracle']}]"
             # flush: redirected to a file this buffers, and a long run looks dead.
             print(f"  {name:<34} {result['counts']['silent']:>4} silent of "
                   f"{result['flips']:>6} flips{weak}", flush=True)
@@ -163,6 +246,8 @@ def measure(root: Path, max_bytes: int) -> dict:
     out["silent_unverifiable"] = sum(
         f["counts"]["silent"] for f in out["fixtures"].values() if not f["verifiable"])
     out["flips"] = sum(f["flips"] for f in verifiable)
+    out["silent_live"] = sum(f["counts"]["silent_live"] for f in out["fixtures"].values())
+    out["oracled"] = sum(1 for f in out["fixtures"].values() if f["oracle"] == "used")
     out["swept"] = len(out["fixtures"])
     out["seconds"] = round(time.monotonic() - started, 1)
     return out
@@ -211,8 +296,13 @@ def main(argv: list[str]) -> int:
 
     print(f"\n=== {result['silent']} silent of {result['flips']} flips across "
           f"{result['swept']} fixtures in {result['seconds']}s -> {out_path} ===")
-    print("=== a hit is a candidate, not a defect: the flip may have made the payload "
-          "inert rather than invisible. Compare runs; read mechanisms. ===")
+    if result["oracled"]:
+        print(f"=== {result['silent_live']} of them are still accepted by a loader across the "
+              f"{result['oracled']} fixture(s) an oracle could judge. Those are the defects; "
+              "the rest made the payload inert rather than invisible. ===")
+    else:
+        print("=== a hit is a candidate, not a defect: the flip may have made the payload "
+              "inert rather than invisible. Compare runs; read mechanisms. ===")
     if result["silent_unverifiable"]:
         print(f"=== {result['silent_unverifiable']} further silent flip(s) in fixtures whose "
               "findings carry no evidence bytes, excluded from the total above. ===")

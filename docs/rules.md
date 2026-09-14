@@ -306,6 +306,15 @@ Separating the two means reading the mechanism, which is exactly how the two HDF
 checks were calibrated and why they are narrow. The number's value is the difference
 between two runs.
 
+`tools/bitflip.py` uses a real loader where one is installed, which is what turns a
+candidate into a verdict: a flip the loader still accepts hid a live payload, and one it
+rejects made the payload inert. `onnxruntime` is optional, never imported by the
+package, and consulted only on fixtures whose *clean* version it accepts — otherwise it
+would call every mutant inert for reasons that have nothing to do with the mutation, and
+the output says "oracle unusable" instead. It covers 1 of the 16 fixtures below; the
+rest are formats it does not load, or ONNX files whose external paths point outside the
+directory on purpose.
+
 Swept over the 16 finding-bearing fixtures under 4 KB — 79,728 flips, 46 seconds:
 
 | Fixture | Silent flips | Distinct offsets |
@@ -338,11 +347,30 @@ do not appear in any silent list, so both 0.2.1 checks hold.
 
 **Two things this raised that were not known before.**
 
-The `extdata-*` family has never been swept. Its hits concentrate on five to seven
-offsets rather than spreading, and byte 2 — inside the `ir_version` varint — is silent
-in all four: the file still sniffs as ONNX, nothing is reported, and **no MW-SC-073
-either**. That is the same quiet-give-up already recorded above for the protobuf
-reader, now visible on four more fixtures. Worth reading the mechanism on.
+The `extdata-*` family had never been swept, and its 25-28 hits each looked like the
+protobuf reader's quiet give-up on four more fixtures. **They are not defects, and a
+loader settled it.** Every one of the 28 candidates on `extdata-ok.onnx` is *rejected*
+by `onnxruntime`, which accepts the clean fixture: the payload is inert, not invisible.
+
+Decoding the offsets says why, and the why generalises past ONNX. All seven are either
+a field tag or a length prefix — byte 2 is the `graph` tag, and flipping bit 3 turns
+field 7 into field 6, so the model declares its whole graph as a documentation string
+and has no graph left to load. **In protobuf every tag and every length prefix is
+authoritative for every reader.** There is no gap between what the scanner resolves and
+what the loader resolves, so a flip that hides a field hides it from both.
+
+That is the general shape of this defect class, and it is worth stating plainly:
+
+> **A silencing gap needs either redundancy or reader disagreement.** Something has to
+> say the same thing twice, or two readers have to resolve the same bytes differently.
+
+Every real instance in this catalogue fits. `zipfile` reads the tail while a magic check
+reads the head — disagreement. HDF5 states a group's contents in a B-tree *and* names
+them in a local heap — redundancy, and both 0.2.1 checks are built on the pair
+disagreeing. The one true ONNX defect, MW-SC-072, existed because a custom domain is
+named twice, on the node and in `opset_import`, and the fix reads the copy the mutation
+did not touch. Where a format encodes each fact once, authoritatively, there is nothing
+to pry apart — and counting flips there measures the format, not the scanner.
 
 And a disagreement to reconcile rather than paper over: the paragraph above records
 external links as scoring **zero** silencing flips, while this sweep reports 33 and 9.
