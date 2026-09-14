@@ -347,10 +347,16 @@ for things it never checked.
   model, and is not built.
 - **Filtered HDF5 fractal heaps are unparsed** (h5py cannot write one, so the branch
   stays untested) and report `MW-SC-065` rather than being skipped in silence.
-- **A known silencing defect is pinned, not hidden.** Fuzzing found 198 single-bit
-  flips across ten fixtures that leave a file detected, parsed and silent. The cases
-  are recorded as strict `xfail` in `tests/test_silencing.py`, so the day one is fixed
-  the marker fails and says so.
+- **Structures that declare their own extent are believed, and that was a real gap.**
+  Fuzzing 0.2.0 found 198 single-bit flips across ten fixtures that left a file
+  detected, parsed, its evidence still in the bytes and the scan completely silent —
+  a smaller-but-plausible count produces a shorter, valid, silent walk, and fail-closed
+  never fires because nothing looks broken. Both halves are closed now: HDF5 in 0.2.1
+  by two narrowly calibrated checks, ONNX by reading the model's own `opset_import`
+  rather than its byte layout. The reproductions stay in `tests/test_silencing.py` as
+  regression tests. What generalises is the warning, not an open defect: three
+  plausible general fixes were refuted by measurement before either of the narrow ones
+  shipped, and the record of why is in the catalogue.
 
 ## Verification
 

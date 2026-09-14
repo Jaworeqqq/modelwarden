@@ -7,6 +7,14 @@ cadence.
 
 ### Fixed
 
+- **The docs described the silencing defect as open when both halves are closed.** The
+  README bullet said the cases were pinned as strict `xfail`; `tests/test_silencing.py`
+  has had no xfail since the orphan-opset check landed, and all nine cases pass as
+  regression tests. `docs/rules.md` still carried "two fixed, one open" in its heading
+  and "the ONNX half is not" in its body. Both now match the code. The record of the
+  three refuted discriminators stays, because it is worth more than the two fixes that
+  shipped.
+
 - **One flipped bit could silence an ONNX custom-operator finding, and no longer can.**
   Byte 23 of `custom-domain.onnx` is the `NodeProto.domain` field header; changing its
   wire type leaves `ai.evil` in the file, leaves the protobuf valid, leaves every byte

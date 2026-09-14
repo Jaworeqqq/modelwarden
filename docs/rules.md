@@ -206,11 +206,13 @@ One deliberate divergence: fickling treats `__future__.annotations` as safe and 
 allowlist does not, because unknown means HIGH here. Anyone with that import in a
 corpus will need an `--allow` entry for it.
 
-### When a shorter declared extent is believed: two fixed, one open
+### When a shorter declared extent is believed: two halves, both closed
 
-Fuzzing found a gap that was open in 0.2.0. The HDF5 half is closed in 0.2.1; the
-ONNX half is not, and the reason is worth reading before anyone relies on a clean
-report of an ONNX file.
+Fuzzing found a gap that was open in 0.2.0. The HDF5 half closed in 0.2.1, the ONNX
+half later, and the section is kept in full because **the three refuted fixes are
+worth more than the two that shipped**: they are where the next attempt at this class
+of defect should start rather than repeat. Read it before trusting any structure in
+this scanner that declares how much there is to walk.
 
 Across ten finding-bearing fixtures, **198 single-bit flips leave a file detected,
 parsed, its evidence still present in the bytes, and the scan completely silent** —
@@ -258,14 +260,20 @@ check needs both conditions. The second closes an acceptance so loose that a str
 `0x01` anywhere in the file was read as an object header: the flipped bit moved an
 address eight bytes on, the walker found `0x01` there and walked into nothing.
 
-**ONNX stays open, and byte-accounting cannot close it.** The clean file and all five
-silencing mutants are identical on every metric available: 80 bytes consumed, three
-nested submessages, no parse error. The mutant is a perfectly well-formed protobuf
-that describes something innocuous while `ai.evil` still sits in the bytes. Catching
-it needs a semantic check — noticing that a suspicious string is present but was
-never reached as a domain field — which is a different piece of work. The
-reproduction stays in `tests/test_silencing.py` as `xfail(strict=True)`, so the day
-it is fixed the marker says so.
+**Byte-accounting could never close the ONNX half, and that is why it stayed open
+longest.** The clean file and all five silencing mutants are identical on every metric
+available: 80 bytes consumed, three nested submessages, no parse error. The mutant is a
+perfectly well-formed protobuf that describes something innocuous while `ai.evil` still
+sits in the bytes. No amount of counting separates them.
+
+What closed it reads the model's own declaration instead of its byte layout. The
+mutation does not touch `opset_import`, which still imports `ai.evil`, and importing an
+operator set is a statement that loading needs that runtime. A domain the model imports
+that **no node uses** is now reported on its own (MW-SC-072); one that a node does use
+is reported from the node walk as before, so nothing is reported twice. The
+reproduction stayed in `tests/test_silencing.py` as `xfail(strict=True)` until then,
+and the marker is what turned the fix from a silent pass into a failure that said the
+defect was gone. It is a plain regression parameter now.
 
 **One shape of that semantic check has already been tried and refused**, recorded
 here so the next attempt starts further along. "A printable string the file contains
