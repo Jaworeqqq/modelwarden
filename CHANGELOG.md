@@ -82,6 +82,30 @@ cadence.
   moment the suite grew. It now asserts against the probe's own attempt count — a test
   pinned to a number it does not own is measuring the wrong thing.
 
+- **The README described a tool three phases smaller than the one that ships.** It
+  opened with "four *planned* areas" and marked the supply chain "(this release)",
+  while its own roadmap below showed phases 2, 3 and 4 complete. A reader who stopped
+  after the second paragraph — which is most of them — concluded this was a pickle
+  scanner. It now leads with all four areas, the command that reaches each one, and
+  the 75 rules across five families.
+- Four shipped capabilities were reachable only by reading `--help`: the `lock`
+  subcommand, `probe --probe-file` (with `examples/custom-probes.json` sitting in the
+  repository unmentioned), `server --header`, and baselines on `corpus`. All four are
+  documented now, with worked commands.
+- The `[rag]` extra was advertised beside the zero-dependency claim as though it added
+  a feature. Nothing in the CLI reaches it and no finding depends on it: it is the
+  instrument that measured two candidate rules out of existence (ADR 0013). Said
+  plainly, so nobody installs it expecting a scan to change.
+- Added what a reader could not get anywhere else: real console output for each of the
+  four areas, a SARIF upload snippet for GitHub code scanning, the severity ladder
+  `--fail-on` takes, the allowlist-versus-baseline distinction, and a **What it does
+  not do** section — no weight inspection, no execution, a probe rate is not a verdict,
+  the unparsed filtered-fractal-heap branch, and the pinned silencing defect.
+- `CONTRIBUTING.md` sent contributors to `tests/test_rules.py`, which does not exist;
+  the catalogue check is `tests/test_cli.py::test_every_rule_is_documented`. The `.npy`
+  fixture generator still claimed CI installs pyyaml. The package description and
+  keywords still said "starting with static analysis of model files".
+
 ### Added, for using this in CI
 
 - **`--baseline FILE` and `--save-baseline FILE`** on `scan` and `corpus`. The first

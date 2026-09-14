@@ -5,13 +5,16 @@ build-backend = "hatchling.build"
 [project]
 name = "modelwarden"
 dynamic = ["version"]
-description = "Security validation for AI models, starting with static analysis of model files."
+description = "Security validation for AI models: model files, MCP tool definitions, RAG corpora and live LLM endpoints, without ever loading what it inspects."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = []
-keywords = ["security", "machine-learning", "pickle", "safetensors", "supply-chain", "sarif"]
+keywords = [
+  "security", "ai-security", "machine-learning", "supply-chain", "pickle", "safetensors",
+  "gguf", "onnx", "mcp", "prompt-injection", "llm-security", "rag", "red-teaming", "sarif",
+]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Environment :: Console",

@@ -1,7 +1,7 @@
 """Regenerate the NumPy fixtures with real numpy.
 
 Not run by the test suite, which is why the fixtures are committed; CI installs
-only pytest and pyyaml. Requires `pip install numpy`.
+only pytest and ruff. Requires `pip install numpy`.
 
     python generate.py
 

@@ -45,7 +45,8 @@ A rule needs a measurement, not an opinion. The pattern this project follows:
 2. Run both. Record the numbers, including the false-positive side — that is the
    half that decides whether a rule ships.
 3. Write it down in `docs/rules.md` with its denominators.
-   `tests/test_rules.py` fails if a rule exists with no catalogue entry.
+   `tests/test_cli.py::test_every_rule_is_documented` fails if a rule exists with
+   no catalogue entry, and a cited CVE must attach to a rule the suite exercises.
 4. Map it to MITRE ATLAS and OWASP LLM Top 10.
 
 Rules have been withdrawn here for failing step 2. A finding that fires on most
