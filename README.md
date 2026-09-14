@@ -1,8 +1,9 @@
 # modelwarden
 
-> Security validation for AI models and the systems around them — model files,
-> MCP tool definitions, RAG corpora and live LLM endpoints — that never loads,
-> imports or executes what it inspects.
+> Security validation for AI systems, in two modes. **Statically**: model files, MCP
+> tool definitions and RAG corpora, read but never loaded, imported or executed.
+> **Live**: probes against a running LLM endpoint, and questions put to a running MCP
+> server.
 
 [![CI](https://github.com/Jaworeqqq/modelwarden/actions/workflows/ci.yml/badge.svg)](https://github.com/Jaworeqqq/modelwarden/actions/workflows/ci.yml)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
@@ -29,6 +30,13 @@ bytes off a disk, and none of it is covered by a model-file scanner.
 Four areas, all of them shipping today, built in the order of how much
 infrastructure each one needs. **75 rules** in five families: `MW-GEN` (engine),
 `MW-SC` (supply chain), `MW-MCP` (agents), `MW-LLM` (probes), `MW-RAG` (corpus).
+
+Two of the four reach a system that is already running. `probe` sends prompts to a
+live endpoint and reports how often each one worked; `server` starts or connects to
+an MCP server and judges the tools it serves right now, which is the only way to
+catch a server that answers one way during review and another way afterwards.
+Everything else reads bytes that are already on disk and makes no network request
+at all.
 
 | Area | Command | Target |
 |---|---|---|
@@ -318,9 +326,18 @@ for things it never checked.
 
 - **It does not look at weights.** A backdoored model whose file format is perfectly
   well-formed passes. Nothing here detects trojaned parameters or data poisoning.
-- **It does not execute anything.** No model is loaded, no inference is run on a
-  scanned file, no sandbox is involved. That is the design, and it is also the limit:
-  behaviour that only appears at load time is out of scope.
+- **It does not load models — with one exception you name yourself.** No model file is
+  deserialised, imported or executed, and no inference is run on anything scanned. The
+  limit of that design: behaviour appearing only at load time is out of scope. The
+  exception is `modelwarden server`, which starts the MCP server you named on the
+  command line, because questioning a live server means running it. It is never
+  launched from a configuration file the scanner happened to read, and never through a
+  shell.
+- **Live modes send traffic, static scanning sends none.** `probe` sends prompts to the
+  endpoint you name and `server` speaks to the server you name; nothing else leaves the
+  machine, and the API key never appears in a finding, a report or a target
+  description. `scan` and `corpus` make no network requests — an external HDF5 link or
+  an ONNX `external_data` path is reported, never followed.
 - **A probe result is a rate, not a verdict.** `0 of 20` means twenty attempts did not
   work on that endpoint that day, not that the model is safe. A probe that comes back
   empty against a small model says nothing about a capable one — measured, and the

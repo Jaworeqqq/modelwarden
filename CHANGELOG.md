@@ -101,6 +101,15 @@ cadence.
   `--fail-on` takes, the allowlist-versus-baseline distinction, and a **What it does
   not do** section — no weight inspection, no execution, a probe rate is not a verdict,
   the unparsed filtered-fractal-heap branch, and the pinned silencing defect.
+- **The new tagline claimed the tool "never executes what it inspects", which is false
+  for one subcommand.** `modelwarden server -- <command>` starts the MCP server named on
+  the command line; the Live MCP servers section said so three screens further down, and
+  the "It does not execute anything" bullet under *What it does not do* contradicted it
+  too. Both now scope the claim to model files and name the exception. The README also
+  buried live probing inside a list, so a reader parsed the whole tool as static: the
+  tagline is now explicitly two modes, and the network boundary is stated — `probe` and
+  `server` send traffic to the target you name, `scan` and `corpus` send none, and an
+  external HDF5 link or ONNX `external_data` path is reported rather than followed.
 - `CONTRIBUTING.md` sent contributors to `tests/test_rules.py`, which does not exist;
   the catalogue check is `tests/test_cli.py::test_every_rule_is_documented`. The `.npy`
   fixture generator still claimed CI installs pyyaml. The package description and
