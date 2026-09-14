@@ -56,6 +56,7 @@ class Format(enum.Enum):
     ONNX = "onnx"
     MCP_TOOLS = "mcp-tools"
     MCP_CONFIG = "mcp-config"
+    COMPRESSED = "compressed"
     UNKNOWN = "unknown"
 
 
@@ -66,6 +67,26 @@ MCP_SNIFF_LIMIT = 16 * 1024 * 1024
 # ONNX is a protobuf ModelProto with no magic bytes. It is recognised by its
 # shape: field 1 (ir_version) as a varint, then field 7 (graph) or 8 (opset).
 ONNX_SNIFF_LIMIT = 64 * 1024
+
+
+# Wrappers a loader unwraps on the way to a model. `joblib.load` picks its decompressor
+# by magic exactly like this, and `pickle.load(gzip.open(...))` is an ordinary thing to
+# write, so a pickle behind one of these is as live as a pickle in front of one.
+def compression_of(head: bytes) -> str | None:
+    """Which compressor wrote this, or None."""
+    if head.startswith(b"\x1f\x8b"):
+        return "gzip"
+    if head.startswith(b"BZh") and head[3:4].isdigit():
+        return "bzip2"
+    if head.startswith(b"\xfd7zXZ\x00"):
+        return "xz"
+    # zlib has no magic, it has a two-byte header with a check constraint: low nibble
+    # of the first byte is the method (8 = deflate) and the pair is a multiple of 31.
+    # Without that arithmetic every file whose first byte is 'x' would match.
+    if len(head) >= 2 and head[0] & 0x0F == 8 and (head[0] >> 4) <= 7:
+        if ((head[0] << 8) | head[1]) % 31 == 0:
+            return "zlib"
+    return None
 
 
 def has_pickle_header(head: bytes) -> bool:
@@ -160,6 +181,11 @@ def inspect_stream(fh: BinaryIO, size: int) -> Detection:
                 matches.append(json_format)
     if not matches and _looks_like_onnx(fh):
         matches.append(Format.ONNX)
+    # Last: a compressed wrapper is only interesting when nothing else claimed the
+    # bytes. A zlib header is two bytes of arithmetic, which a real model file can
+    # satisfy by accident, and the format that owns the file should win.
+    if not matches and compression_of(head) is not None:
+        matches.append(Format.COMPRESSED)
     return Detection(matches, tuple(undecided))
 
 
@@ -253,15 +279,25 @@ def _parses_as_pickle(fh: BinaryIO, size: int) -> bool | None:
     The third answer is the point. A bad opcode means this is not a pickle; reaching
     the edge of the prefix mid-stream means the question was never answered, and
     returning False for both let a 16 MB protocol-0 pickle pass as an unknown file.
+
+    At least one opcode has to carry an argument, and that clause is load-bearing.
+    Several ASCII letters are zero-argument opcodes, so an ordinary filename is a
+    complete pickle: `blob0.bin` reads as BUILD, LIST, OBJ, BUILD, POP, STOP and ends
+    at byte 5. A 60 MB tar archive of random blobs was classified as a pickle on the
+    strength of its first member's name and reported MW-SC-003 — measured, on the bare
+    file, with no container involved. A stream that produces no value is not a pickle
+    anybody saved, and a dangerous one always names a module, which is an argument.
     """
     fh.seek(0)
     data = fh.read(HEADERLESS_PROBE_LIMIT)
     opcodes = 0
+    with_argument = 0
     try:
-        for opcode, _arg, _pos in pickletools.genops(io.BytesIO(data)):
+        for opcode, arg, _pos in pickletools.genops(io.BytesIO(data)):
             opcodes += 1
+            with_argument += arg is not None
             if opcode.name == "STOP":
-                return opcodes >= 2
+                return opcodes >= 2 and with_argument >= 1
     except ValueError:
         return None if size > len(data) and opcodes >= 2 else False
     return None if size > len(data) and opcodes >= 2 else False

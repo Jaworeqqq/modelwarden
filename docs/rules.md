@@ -432,6 +432,48 @@ Two ceilings guard the walk rather than one step of it: archives nest at most
 materialise at most 512 MB in total. A per-member limit does not bound a zip bomb,
 because a bomb is a thousand members or a nest that each pass their own check.
 
+### The wrapper a loader takes off on the way in
+
+`joblib.dump(..., compress=3)` writes a zlib stream with a pickle inside it, and
+`joblib.load` picks its decompressor by magic and unpickles what comes out.
+`pickle.load(gzip.open(path))` is an ordinary line to write. The payload executes on
+load exactly as it would bare.
+
+Measured before this shipped, with `os.system` inside each:
+
+| File | Reported before | Reported now |
+|---|---|---|
+| `model.pkl.gz` | **nothing**, counted as skipped | MW-SC-001 |
+| `model.pkl.bz2` | **nothing**, counted as skipped | MW-SC-001 |
+| `model.pkl.xz` | **nothing**, counted as skipped | MW-SC-001 |
+| `model.joblib` (zlib) | MW-GEN-001, **low** | MW-SC-001 |
+
+The zlib row is the one worth pausing on. It was not silent, it was *quiet*: MW-GEN-001
+is low, the default threshold is `high`, so a gate reported the file and passed it.
+
+Nothing new is dispatched by hand. The wrapper is a container like any other, so it
+goes through the shared dispatch in `supply_chain/_dispatch.py` — the same one archive
+members use — and every format is reachable through it for free. That module exists
+precisely because `archive.py` once had a private classifier and lost five payload
+classes to it; a third container with a third copy would have rebuilt the defect.
+
+**Unwrapping is not free, so it is bounded twice.** A prefix of 1 MB is decompressed
+and classified first; only bytes that look like a format worth scanning get the rest
+unpacked, to a ceiling of 64 MB. A 60 MB incompressible `.tar.gz` therefore costs 4 ms
+and is skipped, which is the right answer for a file no model loader opens. A stream
+that is truncated, empty, or larger than the ceiling is MW-GEN-006 rather than a pass.
+What it costs: a zip inside a gzip is not found, because `zipfile` reads the tail and a
+prefix has none.
+
+**A false positive this uncovered, which predates it.** Several ASCII letters are
+zero-argument pickle opcodes, so an ordinary filename parses as a complete pickle:
+`blob0.bin` is BUILD, LIST, OBJ, BUILD, POP, STOP, ending at byte 5. A 60 MB tar of
+random blobs was classified as a pickle on the strength of its first member's name and
+reported MW-SC-003 — on the bare file, with no container involved. The headerless probe
+now also requires at least one opcode carrying an argument. A stream that produces no
+value is not a pickle anybody saved, and a dangerous one always names a module, which
+is an argument. Protocol-0 and protocol-2 payloads are still detected; the tar is not.
+
 ## Supply chain: safetensors
 
 | ID | Default | Title |

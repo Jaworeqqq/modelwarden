@@ -22,6 +22,7 @@ def builtin_scanners() -> list[Scanner]:
     from modelwarden.scanners.agents import mcp, mcp_config
     from modelwarden.scanners.supply_chain import (
         archive,
+        compressed,
         gguf,
         hdf5,
         npy,
@@ -40,6 +41,7 @@ def builtin_scanners() -> list[Scanner]:
         gguf.GGUFScanner(),
         hdf5.HDF5Scanner(),
         onnx.ONNXScanner(),
+        compressed.CompressedScanner(),
     ]
 
 

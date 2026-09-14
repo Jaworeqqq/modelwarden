@@ -134,7 +134,7 @@ def test_a_buried_payload_is_located_in_its_member(kind, tmp_path):
 
 
 def test_a_nest_of_archives_stops_at_the_depth_limit(tmp_path):
-    from modelwarden.scanners.supply_chain.archive import MAX_NESTING
+    from modelwarden.scanners.supply_chain._dispatch import MAX_NESTING
 
     blob = malicious_zip()
     for _ in range(MAX_NESTING + 2):

@@ -1,7 +1,11 @@
 """Zip, NumPy and safetensors containers. The import policy is stubbed."""
+import bz2
+import gzip
+import lzma
 import os
 import struct
 import zipfile
+import zlib
 
 import builders as b
 import pytest
@@ -141,3 +145,86 @@ def test_header_bomb(tmp_path):
     path = b.write(tmp_path / "m.safetensors", struct.pack("<Q", length) + b"{")
     os.truncate(path, 8 + length)
     assert rule_ids(path) == ["MW-SC-030"]
+
+
+# --- compressed wrappers ----------------------------------------------------------
+#
+# `joblib.dump(..., compress=3)` writes a zlib stream with a pickle inside, and
+# `pickle.load(gzip.open(path))` is an ordinary line to write. The payload executes on
+# load exactly as it would bare. Before this existed, .pkl.gz / .bz2 / .xz carrying
+# os.system were counted as skipped and reported nothing, and a zlib one under a
+# .joblib name got MW-GEN-001 — low, under the default --fail-on, so a gate passed it.
+
+@pytest.mark.parametrize(
+    ("suffix", "pack"),
+    [
+        (".pkl.gz", gzip.compress),
+        (".joblib", zlib.compress),   # what joblib writes at compress=3
+        (".pkl.bz2", bz2.compress),
+        (".pkl.xz", lzma.compress),
+    ],
+    ids=["gzip", "zlib", "bzip2", "xz"],
+)
+def test_a_pickle_behind_a_compressor_is_still_reported(suffix, pack, tmp_path):
+    path = b.write(tmp_path / f"model{suffix}", pack(b.global_call("os", "system")))
+    assert "MW-SC-001" in rule_ids(path)
+
+
+def test_the_finding_names_the_wrapper_it_came_from(tmp_path):
+    path = b.write(tmp_path / "model.pkl.gz", gzip.compress(b.global_call("os", "system")))
+    [finding] = [f for f in findings(path) if f.rule.id == "MW-SC-001"]
+    assert finding.location.member == "gzip"
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("notes.txt.gz", b"just some release notes\n" * 40),
+        ("config.json.gz", b'{"lr": 0.001, "epochs": 10}'),
+        ("weights.pt.gz", None),  # a benign torch state dict, filled in below
+    ],
+)
+def test_an_honest_compressed_file_stays_clean(name, payload, tmp_path):
+    data = b.torch_state_dict() if payload is None else payload
+    assert rule_ids(b.write(tmp_path / name, gzip.compress(data))) == []
+
+
+def test_a_truncated_compressed_stream_is_not_clean(tmp_path):
+    # Fail closed: a wrapper that cannot be opened has had nothing checked inside it.
+    whole = gzip.compress(b.global_call("os", "system"))
+    path = b.write(tmp_path / "model.pkl.gz", whole[:-6])
+    assert "MW-GEN-006" in rule_ids(path)
+
+
+def test_a_stream_that_unpacks_past_the_ceiling_is_not_clean(tmp_path, monkeypatch):
+    from modelwarden.scanners.supply_chain import compressed
+
+    monkeypatch.setattr(compressed, "PROBE_LIMIT", 4)
+    monkeypatch.setattr(compressed, "MAX_DECOMPRESSED", 8)
+    path = b.write(tmp_path / "model.pkl.gz", gzip.compress(b.global_call("os", "system")))
+    assert "MW-GEN-006" in rule_ids(path)
+
+
+def test_an_archive_of_blobs_is_not_mistaken_for_a_pickle(tmp_path):
+    """A filename is a complete pickle if you squint, and the detector used to squint.
+
+    `blob0.bin` reads as BUILD, LIST, OBJ, BUILD, POP, STOP — six valid opcodes ending
+    at byte 5, none of them carrying an argument. A 60 MB tar of random blobs was
+    classified as a pickle on the strength of its first member's name and reported
+    MW-SC-003, with no container involved at all. Requiring one argument-bearing opcode
+    separates a stream that produces a value from a stream that merely parses.
+    """
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for i in range(3):
+            blob = bytes(range(256)) * 8
+            info = tarfile.TarInfo(f"blob{i}.bin")
+            info.size = len(blob)
+            tar.addfile(info, io.BytesIO(blob))
+    raw = buf.getvalue()
+    assert raw[:9] == b"blob0.bin"
+    assert rule_ids(b.write(tmp_path / "source.tar", raw)) == []
+    assert rule_ids(b.write(tmp_path / "source.tar.gz", gzip.compress(raw))) == []

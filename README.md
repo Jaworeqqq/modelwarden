@@ -55,6 +55,7 @@ at all.
 | Keras v3 `.keras` | foreign modules in config.json, Lambda, TorchModuleWrapper (blob scanned as a checkpoint), TFSMLayer, loader APIs, name traversal |
 | HDF5 (`.h5`, legacy Keras, `model.weights.h5`) | external links, external storage, virtual datasets, size bombs, Lambda in legacy `model_config` |
 | ONNX (protobuf) | external-data path traversal, custom operator domains |
+| gzip, bzip2, xz, raw zlib | the model inside the wrapper — `joblib` at `compress=3`, `model.pkl.gz` |
 | MCP `tools/list` (JSON) | hidden instructions, invisible characters, tool shadowing, contradictory trust hints |
 | MCP client config (JSON) | unpinned servers, stored secrets, plain HTTP, shell launches |
 | Live MCP server (stdio or HTTP) | the same tool checks against what a server serves now, and against a lockfile |
@@ -333,6 +334,10 @@ for things it never checked.
   command line, because questioning a live server means running it. It is never
   launched from a configuration file the scanner happened to read, and never through a
   shell.
+- **A zip inside a gzip is not found.** `zipfile` locates an archive by its tail, and
+  a compressed wrapper is classified from a decompressed prefix so that an ordinary
+  `.tar.gz` costs a prefix of work instead of a full unpack. Every other format is
+  recognised from its head and is found normally.
 - **One member shape cannot be looked inside.** A member that is both compressed and
   larger than 64 MB cannot be seeked and cannot be held, so only the formats read front
   to back — pickle and `.npy` — are still scanned there. Anything else is reported as

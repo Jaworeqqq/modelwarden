@@ -21,15 +21,15 @@ import re
 import struct
 import zipfile
 import zlib
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import BinaryIO
 
-from modelwarden.core import detect
 from modelwarden.core.detect import NUMPY_MAGIC, ZIP_MAGIC, Format, has_pickle_header
 from modelwarden.core.findings import Finding, Location, Rule, Severity
-from modelwarden.core.rules import NOT_ANALYSED, UNCLASSIFIED
+from modelwarden.core.rules import UNCLASSIFIED
 from modelwarden.scanners.supply_chain import gguf, hdf5, keras, npy, onnx, safetensors
+from modelwarden.scanners.supply_chain._dispatch import Budget, dispatch
 from modelwarden.scanners.supply_chain.pickle import (
     ATLAS,
     OWASP,
@@ -69,26 +69,6 @@ _HEAD = 16
 # larger ones are only reported.
 RAW_FALLBACK_LIMIT = 64 * 1024 * 1024
 _READ_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError)
-# How far a zip inside a zip inside a zip is followed. Past anything a real toolchain
-# produces, and short enough that a crafted nest cannot spend the scan.
-MAX_NESTING = 4
-# Total decompressed bytes one archive may materialise. RAW_FALLBACK_LIMIT bounds a
-# single member and not the walk: a thousand members, or a nest, each pass their own
-# check. A zip bomb is exactly that shape, so the ceiling has to be cumulative.
-TOTAL_BUFFER_LIMIT = 512 * 1024 * 1024
-
-
-class _Budget:
-    """What is left of TOTAL_BUFFER_LIMIT, carried through the whole nest."""
-
-    def __init__(self, total: int = TOTAL_BUFFER_LIMIT):
-        self.remaining = total
-
-    def take(self, size: int) -> bool:
-        if size > self.remaining:
-            return False
-        self.remaining -= size
-        return True
 # A Keras v3 archive always carries both; config.json alone is just a file.
 _KERAS_MARKERS = frozenset({"config.json", "metadata.json"})
 
@@ -102,7 +82,7 @@ class ZipScanner:
         # dispatched to whichever scanner owns its format.
         *PICKLE_RULES, *npy.NPY_RULES, *keras.KERAS_RULES, *hdf5.HDF5_RULES,
         *gguf.GGUF_RULES, *onnx.ONNX_RULES, *safetensors.SafetensorsScanner.rules,
-        UNCLASSIFIED, NOT_ANALYSED,
+        UNCLASSIFIED,
     )
 
     def scan(self, path: Path, display: str) -> Iterator[Finding]:
@@ -112,10 +92,10 @@ class ZipScanner:
 
 def scan_zip(
     fh: BinaryIO, display: str, prefix: str = "", depth: int = 0,
-    budget: _Budget | None = None,
+    budget: Budget | None = None,
 ) -> Iterator[Finding]:
     """Scan a zip read from any seekable stream. `prefix` labels members of nested archives."""
-    budget = budget if budget is not None else _Budget()
+    budget = budget if budget is not None else Budget()
     try:
         archive = zipfile.ZipFile(fh)
     except zipfile.BadZipFile as exc:
@@ -148,7 +128,7 @@ def embedded_blob(data: bytes, display: str, member: str) -> Iterator[Finding]:
 
 def _member(
     archive: zipfile.ZipFile, info: zipfile.ZipInfo, fh: BinaryIO, display: str, member: str,
-    depth: int, budget: _Budget,
+    depth: int, budget: Budget,
 ) -> list[Finding]:
     """One member, classified by content and handed to whichever scanner owns the format."""
     size = info.file_size
@@ -162,16 +142,16 @@ def _member(
             found = [_unreadable(display, member, exc)]
             raw = _raw_member(fh, info)
             if raw is not None:
-                found.extend(_dispatch(io.BytesIO(raw), len(raw), display, member, depth, budget))
+                found.extend(dispatch(io.BytesIO(raw), len(raw), display, member, depth, budget))
             return found
-        return _dispatch(io.BytesIO(data), len(data), display, member, depth, budget)
+        return dispatch(io.BytesIO(data), len(data), display, member, depth, budget)
 
     # Too large to hold, or the archive's budget is spent. A stored member needs no
     # buffer at all: it is already a byte range of the archive and a window over it
     # seeks like a file. That trades the CRC check for being able to look inside,
     # which is the trade large stored HDF5 members have always been given.
     if info.compress_type == zipfile.ZIP_STORED and (start := _data_offset(fh, info)) is not None:
-        return _dispatch(_Window(fh, start, size), size, display, member, depth, budget)
+        return dispatch(_Window(fh, start, size), size, display, member, depth, budget)
 
     return _too_large(archive, info, display, member)
 
@@ -206,52 +186,6 @@ def _too_large(
     return [Finding(UNCLASSIFIED, UNCLASSIFIED.default_severity,
                     f"{reason}, and it is compressed, so it could not be classified",
                     Location(display, member))]
-
-
-def _dispatch(
-    stream: BinaryIO, size: int, display: str, member: str, depth: int, budget: _Budget,
-) -> list[Finding]:
-    """Every format the member plausibly is, scanned — the engine's rule, one layer down.
-
-    Collected eagerly per format because the scanners are generators sharing one
-    stream: a lazy second format would read from wherever the first one stopped.
-    """
-    found: list[Finding] = []
-    for fmt in detect.inspect_stream(stream, size).formats:
-        found.extend(_scan_as(fmt, stream, size, display, member, depth, budget))
-    return found
-
-
-def _scan_as(
-    fmt: Format, stream: BinaryIO, size: int, display: str, member: str, depth: int,
-    budget: _Budget,
-) -> Iterable[Finding]:
-    if fmt is Format.PICKLE:
-        stream.seek(0)
-        return findings_for(analyse(stream, end=size), display, member)
-    if fmt is Format.NUMPY:
-        stream.seek(0)
-        return npy.scan_stream(stream, display, member)
-    if fmt is Format.HDF5:
-        return hdf5.scan_hdf5(stream, size, display, member)
-    if fmt is Format.SAFETENSORS:
-        return safetensors.scan_stream(stream, size, display, member)
-    if fmt is Format.GGUF:
-        return gguf.scan_stream(stream, size, display, member)
-    if fmt is Format.ONNX:
-        stream.seek(0)
-        return onnx.scan_onnx(stream.read(size), display, member)
-    if fmt is Format.ZIP:
-        if depth >= MAX_NESTING:
-            return [Finding(NOT_ANALYSED, Severity.MEDIUM,
-                            f"archive nested more than {MAX_NESTING} deep, not followed",
-                            Location(display, member))]
-        return list(scan_zip(stream, display, member + "/", depth + 1, budget))
-    # MCP tool lists and client configurations are recognised by core.detect and
-    # deliberately not scanned here: they are not members a model loader opens, and
-    # JSON inside a checkpoint is that checkpoint's configuration rather than a tool
-    # list somebody approved. A Keras config.json is handled before this, by name.
-    return []
 
 
 def _keras_config(

@@ -7,6 +7,39 @@ cadence.
 
 ### Added
 
+- **A pickle behind a compressor is a pickle.** `model.pkl.gz`, `.pkl.bz2` and `.pkl.xz`
+  carrying `os.system` were counted as skipped and reported nothing at all; a zlib one
+  under a `.joblib` name — what `joblib.dump(..., compress=3)` writes — got MW-GEN-001,
+  which is **low**, under the default `--fail-on high`, so a gate reported it and passed.
+  All four are MW-SC-001 now. `joblib.load` and `pickle.load(gzip.open(...))` execute
+  these exactly as they would a bare pickle.
+- The wrapper is a container like any other and goes through a shared dispatch,
+  `supply_chain/_dispatch.py`, extracted out of `archive.py` in the same change. Both
+  containers now classify and dispatch through one piece of code, so anything that
+  learns to unwrap a new container gets every format at once. The alternative — a third
+  container with a third private classifier — is exactly the defect that cost five
+  payload classes inside archives.
+- Bounded twice, because unwrapping is not free: a 1 MB prefix is decompressed and
+  classified, and only bytes worth scanning get the rest unpacked to a 64 MB ceiling. A
+  60 MB incompressible `.tar.gz` costs 4 ms and is skipped. Truncated, empty or
+  oversized streams are MW-GEN-006, not a pass. What it costs: a zip inside a gzip is
+  not found, because `zipfile` reads the tail and a prefix has none.
+
+### Fixed
+
+- **An ordinary filename was a complete pickle, and a 60 MB tar was scanned as one.**
+  Several ASCII letters are zero-argument opcodes, so `blob0.bin` reads as BUILD, LIST,
+  OBJ, BUILD, POP, STOP and ends at byte 5. A tar of random blobs was classified as a
+  pickle on the strength of its first member's name and reported MW-SC-003 — on the bare
+  file, with no container involved, so this predates the wrapper work and was only found
+  because that work walked into it. The headerless probe now also requires at least one
+  opcode carrying an argument: a stream that produces no value is not a pickle anybody
+  saved, and a dangerous one always names a module, which is an argument. Protocol-0 and
+  protocol-2 payloads are unaffected, and `tools/bitflip.py` reports 286 silent flips
+  before and after, so nothing went quieter.
+
+### Added
+
 - **`tools/bitflip.py`: the sweep that produced the 198 figure now lives in the
   repository.** It was an instrument nobody else had, so the number could not be
   reproduced or moved — an anecdote with a denominator attached. Same shape as
