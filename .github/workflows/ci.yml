@@ -1,0 +1,47 @@
+# The gate for the published repository.
+#
+# This file is inert in the monorepo this project is developed in: GitHub reads
+# workflows only from `.github/workflows` at a repository root, and here the path is
+# nested under `projects/modelwarden/`. It becomes the CI of github.com/Jaworeqqq/
+# modelwarden once `git subtree split` promotes the directory to a repository root,
+# where the same file sits at the top.
+#
+# It runs the same two commands the monorepo gate runs, scoped to this project.
+
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Deliberately not `pip install -e .`, and not the project's dependencies: there
+      # are none. The loudest claim this project makes is that the package imports
+      # nothing outside the standard library, and tests/test_boundary.py enforces it by
+      # walking every import in src/. Installing the project would hide the day that
+      # stops being true; running the suite against a bare interpreter means an import
+      # of anything third-party fails here, in public, on the commit that added it.
+      - name: install the gate, not the project
+        run: pip install pytest ruff
+
+      - name: ruff
+        run: ruff check .
+
+      # pytest needs no flags: pyproject.toml carries testpaths and
+      # --import-mode=importlib, so this is the same run as in the monorepo.
+      - name: pytest
+        run: pytest -q

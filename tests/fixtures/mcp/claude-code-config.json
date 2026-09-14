@@ -1,0 +1,29 @@
+{
+  "numStartups": 128,
+  "autoUpdates": true,
+  "projects": {
+    "/home/example/work": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "mcpServers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"],
+          "env": {
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_000000000000000000EXAMPLE"
+          }
+        },
+        "metrics": {
+          "url": "http://metrics.internal.example/sse"
+        }
+      },
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": []
+    },
+    "/home/example/scratch": {
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": []
+    }
+  }
+}

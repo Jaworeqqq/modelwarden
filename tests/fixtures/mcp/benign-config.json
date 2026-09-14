@@ -1,0 +1,32 @@
+{
+  "_comment": "A client configuration that must produce zero findings: pinned versions, secrets referenced rather than stored, https and loopback endpoints.",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2026.9.1", "/home/user/projects"]
+    },
+    "git": {
+      "command": "uvx",
+      "args": ["mcp-server-git==1.4.0", "--repository", "/home/user/projects/app"]
+    },
+    "installed-server": {
+      "command": "/usr/local/bin/mcp-server-time",
+      "args": ["--local-timezone", "Europe/Warsaw"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github@2026.8.0"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
+        "NODE_ENV": "production"
+      }
+    },
+    "remote-https": {
+      "url": "https://mcp.example.com/sse",
+      "headers": {"Authorization": "Bearer ${MCP_TOKEN}"}
+    },
+    "local-http": {
+      "url": "http://localhost:3000/sse"
+    }
+  }
+}

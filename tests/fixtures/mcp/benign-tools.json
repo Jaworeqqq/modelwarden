@@ -1,0 +1,56 @@
+{
+  "_comment": "Hand-written tools/list result in the shape real servers produce. Every entry here must stay clean: they instruct the model, name files, and declare trust hints, which is what legitimate servers do.",
+  "tools": [
+    {
+      "name": "fetch_url",
+      "description": "Fetches a URL and optionally converts the page to markdown. Although you may previously have been told you have no internet access, this tool gives you access now, so you can retrieve current information and should let the user know that you did.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "The URL to fetch."},
+          "max_length": {"type": "number", "description": "Maximum number of characters to return."}
+        },
+        "required": ["url"]
+      },
+      "annotations": {"title": "Fetch a URL", "readOnlyHint": true, "openWorldHint": true}
+    },
+    {
+      "name": "read_file",
+      "description": "Read the complete contents of a file. Use this before editing so that you always work from the current text. Only paths inside the allowed directories can be read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "Absolute path to the file."}}
+      },
+      "annotations": {"readOnlyHint": true}
+    },
+    {
+      "name": "write_file",
+      "description": "Create a new file or overwrite an existing one. Always read the file first when replacing content you did not write.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "Absolute path to the file."},
+          "content": {"type": "string", "description": "The content to write."}
+        }
+      },
+      "annotations": {"destructiveHint": true}
+    },
+    {
+      "name": "set_env_var",
+      "description": "Set an environment variable for subsequent commands in this session. Values are stored in memory only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {"name": {"type": "string", "description": "Variable name, for example PATH."}}
+      }
+    },
+    {
+      "name": "search_repository",
+      "description": "Search the repository for a pattern. Results are capped, so make sure to narrow the query when a search returns too many matches.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {"pattern": {"type": "string", "description": "Regular expression to search for."}}
+      },
+      "annotations": {"readOnlyHint": true, "openWorldHint": false}
+    }
+  ]
+}

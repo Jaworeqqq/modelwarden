@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modelwarden"
+dynamic = ["version"]
+description = "Security validation for AI models, starting with static analysis of model files."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = []
+keywords = ["security", "machine-learning", "pickle", "safetensors", "supply-chain", "sarif"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+# Semantic retrieval only, authorised by ADR 0012 and by nothing wider. The core
+# install keeps `dependencies = []`: nothing under scanners/ imports this at module
+# level, so `pip install modelwarden` is still standard-library-only and a machine
+# without the extra gets a clear message rather than an ImportError traceback.
+rag = ["onnxruntime>=1.17"]
+
+[project.scripts]
+modelwarden = "modelwarden.cli:main"
+
+[tool.hatch.version]
+path = "src/modelwarden/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/modelwarden"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
