@@ -1,0 +1,86 @@
+# Publishing to PyPI, on a tag.
+#
+# Trusted Publishing (OIDC): PyPI is told, once, that this workflow in this repository
+# may publish this project, and GitHub mints a short-lived token per run. No API token
+# is stored in repository secrets, so there is nothing here to leak or to rotate.
+#
+# The gate runs again here rather than being assumed from the branch build. A tag can
+# point at any commit, including one that never saw CI, and "it passed on main" is not
+# the same claim as "the bytes being uploaded passed".
+---
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Same two commands as CI, and the same deliberate refusal to install the
+      # project: the package must import nothing outside the standard library, and
+      # installing it here would hide the day that stops being true.
+      - name: install the gate, not the project
+        run: pip install pytest ruff
+
+      - run: ruff check .
+      - run: pytest -q
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # A tag that disagrees with the package version publishes something nobody
+      # asked for, under a number nobody chose, and it is silent about it. Cheap to
+      # check, expensive to discover on PyPI where a version cannot be reused.
+      - name: the tag and the package must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(python -c "import re,pathlib; \
+            print(re.search(r'__version__ = \"([^\"]+)\"', \
+            pathlib.Path('src/modelwarden/__init__.py').read_text()).group(1))")
+          echo "tag=$tag package=$pkg"
+          test "$tag" = "$pkg"
+
+      - run: pip install build
+      - run: python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Must match the environment name on PyPI's publisher for this project exactly,
+    # along with the repository and the filename of this workflow. A mismatch in any
+    # of the three fails at the upload step, after a green gate and a built artifact,
+    # which reads like a broken release rather than a misconfigured one.
+    # It is also the place to hang a manual approval if this stops being automatic.
+    environment: modelwarden
+    permissions:
+      id-token: write   # the only permission Trusted Publishing needs
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

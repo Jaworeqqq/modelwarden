@@ -86,10 +86,10 @@ behind it: [docs/rules.md](docs/rules.md).
 
 ## Install
 
-Python 3.12 or newer. Not on PyPI yet:
+Python 3.12 or newer, and nothing else — the core has no dependencies:
 
 ```bash
-pip install git+https://github.com/Jaworeqqq/modelwarden.git
+pip install modelwarden
 ```
 
 From a checkout, or without installing anything at all:
@@ -240,7 +240,7 @@ scanning alerts, with stable fingerprints so a dismissed alert stays dismissed
 across unrelated edits.
 
 ```yaml
-- run: pip install git+https://github.com/Jaworeqqq/modelwarden.git
+- run: pip install modelwarden
 - run: modelwarden scan ./models --format sarif --output modelwarden.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@v3
   with:

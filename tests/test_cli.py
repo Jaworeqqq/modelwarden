@@ -201,3 +201,18 @@ def test_every_cited_cve_attaches_to_a_rule_some_test_exercises():
     suite = "\n".join(p.read_text() for p in (root / "tests").rglob("*.py"))
     unbacked = {cve: rule for cve, rule in cited.items() if rule not in suite}
     assert not unbacked, f"cited but never exercised: {unbacked}"
+
+
+def test_the_readme_rule_count_matches_the_catalogue():
+    """A number in prose that no test owns drifts on the first rule nobody counted.
+
+    The README opens by claiming a rule count, which is the first concrete thing a
+    reader checks and the easiest thing to leave stale. It is cheap to own, so it is
+    owned here rather than trusted.
+    """
+    import re
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    claimed = re.search(r"\*\*(\d+) rules\*\*", readme)
+    assert claimed, "the README no longer states a rule count; drop this test or restore it"
+    assert int(claimed.group(1)) == len(Registry.default().rules)

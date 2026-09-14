@@ -3,9 +3,27 @@
 Notable changes to modelwarden. Dates are the day the work landed, not a release
 cadence.
 
-## Unreleased
+## 0.5.0 — 2026-09-14
 
 ### Added
+
+- **On PyPI: `pip install modelwarden`.** Published by GitHub Actions on a `v*` tag
+  through PyPI Trusted Publishing, so no API token is stored in repository secrets and
+  there is nothing to leak or rotate. The gate runs again inside the publish workflow
+  rather than being inherited from the branch build: a tag can point at any commit,
+  including one CI never saw, and "it passed on main" is not the same claim as "the
+  bytes being uploaded passed". The workflow also refuses to build when the tag and
+  `__version__` disagree — a mismatch publishes something nobody chose, under a number
+  nobody chose, and PyPI will not let that version be reused.
+- Verified from a clean virtualenv before release: the wheel installs pulling in
+  **nothing**, `modelwarden --version` reports 0.5.0, `modelwarden rules` lists all 75,
+  and a scan reports findings from the newly reachable paths.
+- `Development Status` moves from Pre-Alpha to Beta. Four areas, 75 rules and a gate
+  that has held for several releases is not pre-alpha, and saying so understates what
+  somebody installing it gets.
+- A test now pins the rule count quoted in the README to `Registry.rules`. A number in
+  prose that no test owns drifts on the first rule nobody counted, and this project
+  spends its credibility on numbers being right.
 
 - **A pickle behind a compressor is a pickle.** `model.pkl.gz`, `.pkl.bz2` and `.pkl.xz`
   carrying `os.system` were counted as skipped and reported nothing at all; a zlib one
@@ -24,21 +42,6 @@ cadence.
   60 MB incompressible `.tar.gz` costs 4 ms and is skipped. Truncated, empty or
   oversized streams are MW-GEN-006, not a pass. What it costs: a zip inside a gzip is
   not found, because `zipfile` reads the tail and a prefix has none.
-
-### Fixed
-
-- **An ordinary filename was a complete pickle, and a 60 MB tar was scanned as one.**
-  Several ASCII letters are zero-argument opcodes, so `blob0.bin` reads as BUILD, LIST,
-  OBJ, BUILD, POP, STOP and ends at byte 5. A tar of random blobs was classified as a
-  pickle on the strength of its first member's name and reported MW-SC-003 — on the bare
-  file, with no container involved, so this predates the wrapper work and was only found
-  because that work walked into it. The headerless probe now also requires at least one
-  opcode carrying an argument: a stream that produces no value is not a pickle anybody
-  saved, and a dangerous one always names a module, which is an argument. Protocol-0 and
-  protocol-2 payloads are unaffected, and `tools/bitflip.py` reports 286 silent flips
-  before and after, so nothing went quieter.
-
-### Added
 
 - **`tools/bitflip.py`: the sweep that produced the 198 figure now lives in the
   repository.** It was an instrument nobody else had, so the number could not be
@@ -64,7 +67,57 @@ cadence.
   against a recorded zero); the likely cause is the instrument rather than the scanner,
   and it is written down as a guess because the old code is not in front of us.
 
+- **`--jobs N`, to scan files across several processes.** Measured before it was
+  written, not after: scanning eight 90 MB ONNX models spent 1.22 s of processor time
+  out of 1.23 s wall, with 60% of it inside the protobuf field walk. That shape rules
+  threads out and points at processes, which then returned 2.69x on four workers.
+  A single file stays sequential, because starting a pool costs more than scanning it.
+- The property worth having is not speed but sameness: `iter_files` already sorts and
+  `map` preserves input order, so a parallel run reports the same findings in the same
+  sequence. Verified end to end — the JSON report from `--jobs 4` is byte for byte the
+  report from one process. A scanner that reordered its output under a flag would make
+  two runs impossible to diff, which is most of what a report is for.
+- The allowlist and the lockfile reach a worker through `policy.adopt()`. They are
+  carried by context variables scoped with a context manager, and a context manager
+  cannot span a fork; a worker lives only for one scan, so it adopts them once. The
+  test for this deliberately uses an *unknown* import rather than `os.system`, because
+  a known-dangerous global stays CRITICAL whatever the user allows — it would have
+  passed even if the allowlist never crossed the fork.
+- One honest consequence: multiprocessing's transport is itself pickle, so the suite's
+  tripwire against unpickling had to be narrowed. The exemption is given to the
+  transport rather than to the worker, so a forked worker still carries the tripwire
+  and the scanning code stays covered on both sides of the fork. What the project
+  claims is unchanged — nothing *under scan* is ever deserialised.
+- **MW-LLM-006**, for a document that makes the model call a tool. The model is given
+  one tool and a page that asks the *tool* rather than asking the model. Nothing is
+  ever wired up — the reply is text either way — so what is measured is willingness to
+  emit the call. An agent turns every retrieved page, file and tool result into
+  something that can act on its behalf.
+- **MW-LLM-007**, for a model that writes private data into a URL. It needs to send
+  nothing: a client rendering the markdown fetches the link, and the data leaves with
+  the request. The corpus scanner already reports a document *carrying* such a template
+  (MW-RAG-004); this reports whether a model will *write* one.
+- **The probe suite grew from 15 attempts to 51**, across 68 conversation turns.
+  Encoding, continuation, forged turns and delimiters, many-shot examples, zero-width
+  characters inside the instruction, non-English phrasings, and a crescendo that
+  escalates over four turns. Every channel an application feeds a model — web page,
+  email, CSV cell, footnote, tool result — now carries the same instruction, because a
+  rule that holds for one channel and fails for another is not a rule.
+- The guardrail probe still measures the strength of an instruction on a harmless
+  word. Nothing here asks a model to produce anything worth withholding.
+
 ### Fixed
+
+- **An ordinary filename was a complete pickle, and a 60 MB tar was scanned as one.**
+  Several ASCII letters are zero-argument opcodes, so `blob0.bin` reads as BUILD, LIST,
+  OBJ, BUILD, POP, STOP and ends at byte 5. A tar of random blobs was classified as a
+  pickle on the strength of its first member's name and reported MW-SC-003 — on the bare
+  file, with no container involved, so this predates the wrapper work and was only found
+  because that work walked into it. The headerless probe now also requires at least one
+  opcode carrying an argument: a stream that produces no value is not a pickle anybody
+  saved, and a dangerous one always names a module, which is an argument. Protocol-0 and
+  protocol-2 payloads are unaffected, and `tools/bitflip.py` reports 286 silent flips
+  before and after, so nothing went quieter.
 
 - **Five of seven payload classes survived being placed inside an archive, and no
   longer do.** MW-GEN-005 fixed detection at the top of a file; members of a zip kept
@@ -130,46 +183,9 @@ cadence.
   behind a literal matcher are measured with a broken instrument, so the detector
   multiplies the value of every probe at once.
 
-### Added
-
-- **`--jobs N`, to scan files across several processes.** Measured before it was
-  written, not after: scanning eight 90 MB ONNX models spent 1.22 s of processor time
-  out of 1.23 s wall, with 60% of it inside the protobuf field walk. That shape rules
-  threads out and points at processes, which then returned 2.69x on four workers.
-  A single file stays sequential, because starting a pool costs more than scanning it.
-- The property worth having is not speed but sameness: `iter_files` already sorts and
-  `map` preserves input order, so a parallel run reports the same findings in the same
-  sequence. Verified end to end — the JSON report from `--jobs 4` is byte for byte the
-  report from one process. A scanner that reordered its output under a flag would make
-  two runs impossible to diff, which is most of what a report is for.
-- The allowlist and the lockfile reach a worker through `policy.adopt()`. They are
-  carried by context variables scoped with a context manager, and a context manager
-  cannot span a fork; a worker lives only for one scan, so it adopts them once. The
-  test for this deliberately uses an *unknown* import rather than `os.system`, because
-  a known-dangerous global stays CRITICAL whatever the user allows — it would have
-  passed even if the allowlist never crossed the fork.
-- One honest consequence: multiprocessing's transport is itself pickle, so the suite's
-  tripwire against unpickling had to be narrowed. The exemption is given to the
-  transport rather than to the worker, so a forked worker still carries the tripwire
-  and the scanning code stays covered on both sides of the fork. What the project
-  claims is unchanged — nothing *under scan* is ever deserialised.
-- **MW-LLM-006**, for a document that makes the model call a tool. The model is given
-  one tool and a page that asks the *tool* rather than asking the model. Nothing is
-  ever wired up — the reply is text either way — so what is measured is willingness to
-  emit the call. An agent turns every retrieved page, file and tool result into
-  something that can act on its behalf.
-- **MW-LLM-007**, for a model that writes private data into a URL. It needs to send
-  nothing: a client rendering the markdown fetches the link, and the data leaves with
-  the request. The corpus scanner already reports a document *carrying* such a template
-  (MW-RAG-004); this reports whether a model will *write* one.
-- **The probe suite grew from 15 attempts to 51**, across 68 conversation turns.
-  Encoding, continuation, forged turns and delimiters, many-shot examples, zero-width
-  characters inside the instruction, non-English phrasings, and a crescendo that
-  escalates over four turns. Every channel an application feeds a model — web page,
-  email, CSV cell, footnote, tool result — now carries the same instruction, because a
-  rule that holds for one channel and fails for another is not a rule.
-- The guardrail probe still measures the strength of an instruction on a harmless
-  word. Nothing here asks a model to produce anything worth withholding.
+- A malformed `--baseline` gave `scan` a traceback while `corpus` turned it into a
+  usage error: three `_report()` call sites sat inside the guarded block and the fourth
+  did not. The same bad input had two behaviours.
 
 ### Changed
 
@@ -228,12 +244,6 @@ cadence.
   document. Lines are counted over characters rather than bytes, because the two agree
   only while a document is ASCII and counting wrong yields a plausible wrong number
   rather than an error.
-
-### Fixed
-
-- A malformed `--baseline` gave `scan` a traceback while `corpus` turned it into a
-  usage error: three `_report()` call sites sat inside the guarded block and the fourth
-  did not. The same bad input had two behaviours.
 
 ### Measured
 
