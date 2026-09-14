@@ -24,14 +24,11 @@ on CPU.
    inference), then MCP (static manifests first), then LLM red-teaming, then RAG.
 3. **Core and phase 1 use the standard library only.** The package never imports
    a deserialiser; a test enforces this.
-4. **MIT licence, and the project is entirely in English**: code, README, docs,
-   these ADRs and the write-up. The project is developed inside a larger private
-   repository whose documentation is in another language; this is a deliberate
-   exception there, because the tool is meant for a public audience.
-5. **It is published with `git subtree split`** from that repository. Nothing in
-   it may reference the surrounding infrastructure — inventories, secrets,
-   host addresses or sibling projects — and `tests/test_boundary.py` enforces it
-   by walking every shipped file.
+4. **MIT licence, and the project is entirely in English**: code, README, docs
+   and these ADRs.
+5. **Nothing may reference infrastructure outside the project** — inventories,
+   secrets, host addresses or unrelated projects — and `tests/test_boundary.py`
+   enforces it by walking every shipped file.
 
 ## Rationale
 
@@ -55,8 +52,6 @@ on CPU.
   should end as a contribution upstream instead.
 - **All maintenance is ours:** format quirks, new torch serialisation versions,
   new safetensors dtypes, and a false-positive tail from real-world models.
-- **Two documentation conventions coexist** in the repository where this is
-  developed. The exception is written down there so it is not "fixed" by accident.
 - **Phase 3 is limited by hardware.** 1-3B models on CPU are good enough as
   targets, but too weak to act as a judge, so detectors start with deterministic
   canary tokens ([ADR 0010](0010-canary-detectors-and-rates-for-llm-probes.md)).

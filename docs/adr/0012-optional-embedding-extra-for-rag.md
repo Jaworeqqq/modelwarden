@@ -24,8 +24,8 @@ target and still retrieves for it. Lexical scoring is blind to that by construct
 Against this sits the constraint from ADR 0008, now enforced by a test: every import
 under `src/` must come from `sys.stdlib_module_names`, and `pyproject.toml` must
 declare no runtime dependency. That test was added deliberately, one commit before
-this decision, because the claim appears in the README, the changelog and the
-write-up and was protected only by a denylist of six deserialisers.
+this decision, because the claim appears in the README and the changelog and was
+protected only by a denylist of six deserialisers.
 
 ## Decision
 

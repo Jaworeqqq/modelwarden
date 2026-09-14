@@ -13,5 +13,4 @@ decision with only upsides was not a decision.
 | [0012](0012-optional-embedding-extra-for-rag.md) | The one authorised dependency outside the standard library, and where it may be imported |
 | [0013](0013-semantic-mimicry-is-retrieval-not-displacement.md) | Semantic mimicry is reported as retrieval, not displacement, because displacement could not be measured |
 
-These are the project's own records. It is developed inside a larger repository
-and published from it with `git subtree split`, so numbering starts at 0008.
+Numbering starts at 0008 because the first seven records predate this project.

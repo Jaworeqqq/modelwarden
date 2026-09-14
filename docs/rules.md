@@ -1173,7 +1173,7 @@ produced six findings. Every one was a false positive, in four distinct classes:
 
 | Reported | What it actually was |
 |---|---|
-| MW-RAG-003 on `<!--` | the `<!-- PROJECTS:START -->` marker that `render_portfolio.py` writes between |
+| MW-RAG-003 on `<!--` | the `<!-- ... :START -->` markers a documentation generator writes around a generated block |
 | MW-RAG-006 on a line repeated 14 times | `\|---\|---\|---\|`, the markdown table separator |
 | MW-RAG-005 on "overrides" | "the `--fail-on` flag overrides the default", ordinary prose |
 | MW-RAG-007 ×3 on `.env`, `mcp.json`, `~/.ssh` | developer documentation, including this catalogue describing MW-MCP-003 |
