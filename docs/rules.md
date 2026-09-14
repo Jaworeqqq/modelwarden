@@ -291,6 +291,68 @@ Each looked plausible and each was killed by measurement before any of it reache
 scanner, which is the only reason the two fixes that did ship are as narrow as they
 are.
 
+### The instrument, and what it says about today's code
+
+The sweep that produced the 198 figure lived outside the repository, so the number
+could not be reproduced or moved — an anecdote with a denominator. It is now
+`tools/bitflip.py`, beside `probe_bench.py` and imported by nothing.
+
+**A hit is a candidate, not a defect.** A counted flip leaves the file classified as
+its format, leaves the evidence bytes where they were, and produces no finding at all.
+It may still have made the payload *inert* rather than *invisible*: breaking the
+`"mcpServers"` key of a client configuration hides those servers from this scanner and
+from the client that would have launched them, so nothing that mattered was silenced.
+Separating the two means reading the mechanism, which is exactly how the two HDF5
+checks were calibrated and why they are narrow. The number's value is the difference
+between two runs.
+
+Swept over the 16 finding-bearing fixtures under 4 KB — 79,728 flips, 46 seconds:
+
+| Fixture | Silent flips | Distinct offsets |
+|---|---:|---:|
+| `onnx/custom-domain.onnx` | **0** of 704 | — |
+| `hdf5/userblock-512.h5` | **0** of 20,608 | — |
+| `hdf5/userblock-1024.h5` | **0** of 24,704 | — |
+| `npy/object.npz` | **0** of 3,408 | — |
+| `hdf5/extlink-v3.h5` | 9 | 3 |
+| `hdf5/extstorage-v3.h5` | 29 | 6 |
+| `hdf5/extlink-v0.h5` | 33 | 7 |
+| `hdf5/extstorage-v0.h5` | 38 | 10 |
+| `onnx/extdata-parent.onnx` | 25 | 5 |
+| `onnx/extdata-absolute.onnx` | 27 | 5 |
+| `onnx/extdata-ok.onnx` | 28 | 7 |
+| `onnx/extdata-subdir-escape.onnx` | 28 | 7 |
+| `mcp/claude-code-config.json` | 69 | — |
+| **Total (verifiable)** | **286** | |
+
+126 further silent flips fall in fixtures whose findings carry no evidence bytes
+(`shapebomb-*`, `object.npy`), so "is the payload still there" cannot be asked of them
+and they are excluded from the total rather than folded in. Seven finding-bearing
+fixtures over 4 KB were not swept, and are named in the JSON output: a coverage number
+nobody states reads as "all".
+
+**`custom-domain.onnx` at 0 of 704 is the orphan-opset fix, confirmed independently.**
+So is `userblock-*` at 0 across 45,312 flips. The pinned offsets in
+`tests/test_silencing.py` — `extstorage-v0.h5` byte 142, `extstorage-v3.h5` byte 94 —
+do not appear in any silent list, so both 0.2.1 checks hold.
+
+**Two things this raised that were not known before.**
+
+The `extdata-*` family has never been swept. Its hits concentrate on five to seven
+offsets rather than spreading, and byte 2 — inside the `ir_version` varint — is silent
+in all four: the file still sniffs as ONNX, nothing is reported, and **no MW-SC-073
+either**. That is the same quiet-give-up already recorded above for the protobuf
+reader, now visible on four more fixtures. Worth reading the mechanism on.
+
+And a disagreement to reconcile rather than paper over: the paragraph above records
+external links as scoring **zero** silencing flips, while this sweep reports 33 and 9.
+The likely explanation is in the instrument, not the scanner — MW-SC-060's evidence is
+`file:path`, a string composed from two fields that appears nowhere in the file, so a
+sweep requiring evidence to be literally present would classify *every* flip as
+"payload destroyed" and report zero by construction. `tools/bitflip.py` falls back to
+the longest component that is present. That is a guess about code no longer in front
+of us, so it is written down as a guess.
+
 ## Supply chain: containers
 
 | ID | Default | Title |

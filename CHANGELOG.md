@@ -5,6 +5,32 @@ cadence.
 
 ## Unreleased
 
+### Added
+
+- **`tools/bitflip.py`: the sweep that produced the 198 figure now lives in the
+  repository.** It was an instrument nobody else had, so the number could not be
+  reproduced or moved — an anecdote with a denominator attached. Same shape as
+  `probe_bench.py`: outside the package, imported by nothing, JSON out so two runs
+  diff, and whatever it skips is named rather than dropped.
+- It is deliberately careful about what it claims. A counted flip leaves the file
+  classified, the evidence bytes in place and the scan silent — a **candidate, not a
+  defect**, because the same flip may have made the payload inert rather than
+  invisible. Breaking the `"mcpServers"` key hides those servers from this scanner and
+  from the client that would have launched them. The value is the difference between
+  runs, not the absolute number.
+- Measured on today's code over 16 fixtures and 79,728 flips: **286 silent**, plus 126
+  in fixtures whose findings carry no evidence bytes and which are therefore excluded
+  rather than folded in. `custom-domain.onnx` scores **0 of 704**, confirming the
+  orphan-opset fix independently; `userblock-*` scores 0 across 45,312; and neither
+  pinned offset from `tests/test_silencing.py` appears in any silent list, so both
+  0.2.1 checks hold.
+- Two things it raised that were not known. The `extdata-*` ONNX family had never been
+  swept and shows 25-28 each, concentrated on five to seven offsets, with byte 2 silent
+  in all four and **no MW-SC-073** — the protobuf reader's quiet give-up, on four more
+  fixtures. And the sweep disagrees with the catalogue about external links (33 and 9
+  against a recorded zero); the likely cause is the instrument rather than the scanner,
+  and it is written down as a guess because the old code is not in front of us.
+
 ### Fixed
 
 - **Five of seven payload classes survived being placed inside an archive, and no
